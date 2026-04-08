@@ -22,8 +22,8 @@ func (s *PipelineStore) Create(ctx context.Context, p *models.Pipeline) error {
 	p.ID = uuid.New().String()
 
 	query, args, err := psql.Insert("pipelines").
-		Columns("id", "name", "description", "nodes", "edges", "status").
-		Values(p.ID, p.Name, p.Description, p.Nodes, p.Edges, p.Status).
+		Columns("id", "name", "description", "nodes", "edges", "viewport", "status").
+		Values(p.ID, p.Name, p.Description, p.Nodes, p.Edges, p.Viewport, p.Status).
 		ToSql()
 	if err != nil {
 		return fmt.Errorf("build query: %w", err)

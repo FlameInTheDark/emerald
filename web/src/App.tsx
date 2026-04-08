@@ -5,6 +5,7 @@ import RequireAuth from './components/auth/RequireAuth'
 import Dashboard from './pages/Dashboard'
 import Pipelines from './pages/Pipelines'
 import PipelineEditor from './pages/PipelineEditor'
+import Templates from './pages/Templates'
 import Settings from './pages/Settings'
 import LLMChat from './pages/LLMChat'
 import ChannelConnect from './pages/ChannelConnect'
@@ -32,6 +33,7 @@ export default function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/pipelines" element={<Pipelines />} />
               <Route path="/pipelines/:id" element={<PipelineEditor />} />
+              <Route path="/templates" element={<Templates />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/chat" element={<LLMChat />} />
             </Route>

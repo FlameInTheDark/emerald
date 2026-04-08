@@ -13,7 +13,13 @@ import type {
   KubernetesCluster,
   KubernetesTestConnectionResult,
   Pipeline,
+  PipelineDocument,
   PipelineRunResponse,
+  TemplateBundle,
+  TemplateDetail,
+  TemplateDocument,
+  TemplateImportResult,
+  TemplateSummary,
   User,
 } from '../types'
 
@@ -95,7 +101,19 @@ export const api = {
     get: (id: string) => request<Pipeline>(`/pipelines/${id}`),
     update: (id: string, data: unknown) => request<Pipeline>(`/pipelines/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => request<void>(`/pipelines/${id}`, { method: 'DELETE' }),
+    export: (id: string) => request<PipelineDocument>(`/pipelines/${id}/export`),
     run: (id: string) => request<PipelineRunResponse>(`/pipelines/${id}/run`, { method: 'POST' }),
+  },
+  templates: {
+    list: () => request<TemplateSummary[]>('/templates'),
+    create: (data: unknown) => request<TemplateDetail>('/templates', { method: 'POST', body: JSON.stringify(data) }),
+    get: (id: string) => request<TemplateDetail>(`/templates/${id}`),
+    delete: (id: string) => request<void>(`/templates/${id}`, { method: 'DELETE' }),
+    clone: (id: string) => request<TemplateDetail>(`/templates/${id}/clone`, { method: 'POST' }),
+    createPipeline: (id: string) => request<Pipeline>(`/templates/${id}/pipelines`, { method: 'POST' }),
+    export: (id: string) => request<TemplateDocument>(`/templates/${id}/export`),
+    exportAll: () => request<TemplateBundle>('/templates/export'),
+    import: (raw: string) => request<TemplateImportResult>('/templates/import', { method: 'POST', body: raw }),
   },
   llmProviders: {
     list: () => request<LLMProvider[]>('/llm-providers'),

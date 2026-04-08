@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { NODE_CATEGORIES } from './nodeTypes'
 import { cn } from '../../lib/utils'
+import Input from '../ui/Input'
 import { 
   Zap, Clock, Webhook, Play, Square, Copy, Globe, Code,
   GitBranch, Split, Brain, ChevronDown, ChevronRight, Link, MessageSquare, Send, Trash2,
-  Bot, Workflow, List, Wrench, CornerDownLeft, RefreshCw,
+  Bot, Workflow, List, Wrench, CornerDownLeft, RefreshCw, Search,
 } from 'lucide-react'
 
 const iconMap: Record<string, React.ElementType> = {
@@ -40,21 +41,46 @@ export default function NodePalette({ onDragStart }: NodePaletteProps) {
     trigger: true,
     action: true,
   })
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const normalizedQuery = searchQuery.trim().toLowerCase()
+  const filteredCategories = useMemo(
+    () => NODE_CATEGORIES
+      .map((category) => ({
+        ...category,
+        types: category.types.filter((nodeType) => (
+          `${category.label} ${nodeType.label} ${nodeType.description} ${nodeType.type}`
+            .toLowerCase()
+            .includes(normalizedQuery)
+        )),
+      }))
+      .filter((category) => category.types.length > 0),
+    [normalizedQuery],
+  )
 
   const toggleCategory = (id: string) => {
     setExpandedCategories((prev) => ({ ...prev, [id]: !prev[id] }))
   }
 
   return (
-    <div className="w-72 bg-bg-elevated border-r border-border flex flex-col h-full">
-      <div className="px-4 py-3 border-b border-border">
-        <h3 className="text-sm font-semibold text-text">Nodes</h3>
-        <p className="text-xs text-text-dimmed mt-0.5">Drag nodes to the canvas</p>
+    <div className="flex w-72 max-w-[calc(100vw-2rem)] max-h-[calc(100vh-11rem)] min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated/95 shadow-2xl backdrop-blur">
+      <div className="border-b border-border px-4 py-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-dimmed" />
+          <Input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search nodes..."
+            className="pl-9"
+          />
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto py-2">
-        {NODE_CATEGORIES.map((category) => {
-          const isExpanded = expandedCategories[category.id]
+        {filteredCategories.length === 0 ? (
+          <div className="px-4 py-6 text-sm text-text-dimmed">No nodes match your search.</div>
+        ) : filteredCategories.map((category) => {
+          const isExpanded = normalizedQuery ? true : expandedCategories[category.id]
           return (
             <div key={category.id} className="mb-1">
               <button

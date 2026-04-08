@@ -95,6 +95,60 @@ export interface Pipeline {
   updated_at: string
 }
 
+export interface FlowDefinitionDocument {
+  nodes: unknown[]
+  edges: unknown[]
+  viewport?: Record<string, unknown>
+}
+
+export interface PipelineDocument {
+  version: string
+  kind: 'automator-pipeline'
+  name: string
+  description?: string | null
+  status?: Pipeline['status'] | string
+  definition: FlowDefinitionDocument
+}
+
+export interface TemplateSummary {
+  id: string
+  name: string
+  description?: string | null
+  category: string
+  created_at: string
+}
+
+export interface TemplateDetail extends TemplateSummary {
+  definition: FlowDefinitionDocument
+}
+
+export interface TemplateDocument {
+  version: string
+  kind: 'automator-template'
+  name: string
+  description?: string | null
+  definition: FlowDefinitionDocument
+}
+
+export interface TemplateBundle {
+  version: string
+  kind: 'automator-template-bundle'
+  templates: TemplateDocument[]
+}
+
+export interface TemplateImportFailure {
+  index: number
+  name?: string
+  error: string
+}
+
+export interface TemplateImportResult {
+  created: TemplateSummary[]
+  errors: TemplateImportFailure[]
+  created_count: number
+  failed_count: number
+}
+
 export interface DashboardStats {
   clusters: number
   pipelines: number

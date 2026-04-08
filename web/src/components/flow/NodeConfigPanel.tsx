@@ -590,7 +590,7 @@ export default function NodeConfigPanel({
   }
 
   return (
-    <div className="w-80 bg-bg-elevated border-l border-border flex flex-col h-full">
+    <div className="flex w-[22rem] max-w-[calc(100vw-2rem)] max-h-[calc(100vh-11rem)] min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated/95 shadow-2xl backdrop-blur">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${color}20` }}>

@@ -7,6 +7,7 @@ import (
 	"github.com/FlameInTheDark/automator/internal/db/query"
 	"github.com/FlameInTheDark/automator/internal/pipelineops"
 	"github.com/FlameInTheDark/automator/internal/scheduler"
+	"github.com/FlameInTheDark/automator/internal/templateops"
 )
 
 type PipelineHandler struct {
@@ -159,4 +160,25 @@ func (h *PipelineHandler) Delete(c *fiber.Ctx) error {
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (h *PipelineHandler) Export(c *fiber.Ctx) error {
+	id := c.Params("id")
+	ctx := c.Context()
+
+	pipelineModel, err := h.store.GetByID(ctx, id)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "pipeline not found",
+		})
+	}
+
+	document, err := templateops.BuildPipelineDocument(*pipelineModel)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(document)
 }

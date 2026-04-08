@@ -1,9 +1,8 @@
-import { useCallback, useRef, useState, useEffect } from 'react'
+import { useCallback, useRef, useState, useEffect, type MouseEvent as ReactMouseEvent } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ReactFlow,
   ReactFlowProvider,
-  Controls,
   Background,
   useNodesState,
   useEdgesState,
@@ -19,7 +18,7 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Save, Play, ArrowLeft, Loader2, Trash2, Copy, ListChecks, Scissors, Edit2, GitBranch, Zap, Clock, Webhook, Square, Globe, Code, Split, Brain, Link, MessageSquare, Send, Power, Bot, Workflow, List, Wrench, CornerDownLeft, RefreshCw, Server, Shield } from 'lucide-react'
+import { Save, Play, ArrowLeft, Loader2, Trash2, Copy, ListChecks, Scissors, Edit2, GitBranch, Zap, Clock, Webhook, Square, Globe, Code, Split, Brain, Link, MessageSquare, Send, Power, Bot, Workflow, List, Wrench, CornerDownLeft, RefreshCw, Server, Shield, Download, FileJson, ChevronDown, ChevronUp, Plus, Minus, ScanSearch, Lock, LockOpen } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 
 import NodePalette from '../components/flow/NodePalette'
@@ -37,7 +36,10 @@ import Badge from '../components/ui/Badge'
 import ContextMenu, { type ContextMenuItem } from '../components/ui/ContextMenu'
 import Input from '../components/ui/Input'
 import { Textarea } from '../components/ui/Form'
-import type { NodeExecutionLogData, Pipeline, PipelineRunResponse, NodeType } from '../types'
+import Modal from '../components/ui/Modal'
+import { buildPipelineDocument, extractSingleDefinitionDocument } from '../lib/documents'
+import { downloadJSON, sanitizeFilename } from '../lib/download'
+import type { FlowDefinitionDocument, NodeExecutionLogData, Pipeline, PipelineRunResponse, NodeType, TemplateSummary } from '../types'
 
 const nodeTypes = {
   automator: AutomatorNode,
@@ -332,6 +334,58 @@ function normalizeNodesForSubflows(nodes: Node[]): Node[] {
   return ordered
 }
 
+function hydratePersistedNode(rawNode: any): Node {
+  return {
+    ...rawNode,
+    type: 'automator',
+    data: {
+      ...rawNode?.data,
+      type: rawNode?.data?.type || 'trigger:manual',
+      config: rawNode?.data?.config || {},
+      label: rawNode?.data?.label || 'Node',
+    },
+  }
+}
+
+function hydratePersistedEdge(rawEdge: any): Edge {
+  return {
+    ...rawEdge,
+    ...(rawEdge?.sourceHandle === 'tool' ? toolEdgeOptions : defaultEdgeOptions),
+  }
+}
+
+function serializeFlowNodes(nodes: Node[]) {
+  return normalizeNodesForSubflows(nodes).map(({ type: _type, ...rest }) => rest)
+}
+
+function serializeFlowEdges(edges: Edge[]) {
+  return edges.map(({ ...rest }) => rest)
+}
+
+function buildFlowDefinitionDocument(
+  nodes: Node[],
+  edges: Edge[],
+  viewport: { x: number; y: number; zoom: number },
+): FlowDefinitionDocument {
+  return {
+    nodes: serializeFlowNodes(nodes) as unknown[],
+    edges: serializeFlowEdges(edges) as unknown[],
+    viewport: JSON.parse(JSON.stringify(viewport)) as Record<string, unknown>,
+  }
+}
+
+function buildImportedFlow(definition: FlowDefinitionDocument): { nodes: Node[]; edges: Edge[] } {
+  return {
+    nodes: (definition.nodes || []).map((node) => hydratePersistedNode(node)),
+    edges: (definition.edges || []).map((edge) => hydratePersistedEdge(edge)),
+  }
+}
+
+function buildGeneratedNodeId(node: Node) {
+  const prefix = String(node.data?.type || 'node').replace(/[^a-zA-Z0-9:_-]+/g, '-')
+  return `${prefix}-${crypto.randomUUID()}`
+}
+
 function getVisualExecutionStatus(status?: string): 'pending' | 'running' | 'success' | 'error' | undefined {
   if (!status) return undefined
 
@@ -382,7 +436,14 @@ function PipelineEditor() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
-  const { screenToFlowPosition, getViewport } = useReactFlow()
+  const addJSONTemplateInputRef = useRef<HTMLInputElement>(null)
+  const {
+    screenToFlowPosition,
+    getViewport,
+    zoomIn,
+    zoomOut,
+    fitView: fitCanvasView,
+  } = useReactFlow()
   const { selectedNodeId, setSelectedNodeId, addToast } = useUIStore()
 
   const [nodes, setNodes] = useNodesState([])
@@ -394,21 +455,40 @@ function PipelineEditor() {
   const [pipelineStatus, setPipelineStatus] = useState<Pipeline['status']>('draft')
   const [editingDetails, setEditingDetails] = useState(false)
   const [showExecutionLog, setShowExecutionLog] = useState(false)
+  const [isFlowInteractive, setIsFlowInteractive] = useState(true)
+  const [isNodePaletteOpen, setIsNodePaletteOpen] = useState(false)
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set())
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, string>>({})
   const [nodeLogs, setNodeLogs] = useState<Record<string, NodeExecutionLogData>>({})
   const [activeNodeLogId, setActiveNodeLogId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<EditorContextMenuState | null>(null)
+  const [templateMenuPosition, setTemplateMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [isBlockingOverlayOpen, setIsBlockingOverlayOpen] = useState(false)
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false)
+  const [showTemplateLibraryModal, setShowTemplateLibraryModal] = useState(false)
+  const [templateDraftName, setTemplateDraftName] = useState('')
+  const [templateDraftDescription, setTemplateDraftDescription] = useState('')
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const selectedNodes = nodes.filter((node) => node.selected)
   const selectedNodeIds = selectedNodes.map((node) => node.id)
+  const isCanvasInteractionBlocked = isBlockingOverlayOpen || showSaveTemplateModal || showTemplateLibraryModal || templateMenuPosition !== null
+  const isCanvasInteractionDisabled = isCanvasInteractionBlocked || !isFlowInteractive
 
   const { data: pipeline, isLoading } = useQuery<Pipeline>({
     queryKey: ['pipeline', id],
     queryFn: () => api.pipelines.get(id!),
     enabled: !!id,
   })
+
+  const { data: templates = [], isLoading: areTemplatesLoading } = useQuery<TemplateSummary[]>({
+    queryKey: ['templates'],
+    queryFn: () => api.templates.list(),
+  })
+
+  const buildCurrentDefinition = useCallback((): FlowDefinitionDocument => (
+    buildFlowDefinitionDocument(nodes, edges, getViewport())
+  ), [edges, getViewport, nodes])
 
   useEffect(() => {
     if (pipeline) {
@@ -418,25 +498,12 @@ function PipelineEditor() {
         setPipelineStatus((pipeline.status as Pipeline['status']) || 'draft')
         const parsedNodes = JSON.parse(pipeline.nodes || '[]')
         const parsedEdges = JSON.parse(pipeline.edges || '[]')
-        
-        const flowNodes: Node[] = parsedNodes.map((n: any) => ({
-          ...n,
-          type: 'automator',
-          data: {
-            ...n.data,
-            type: n.data?.type || 'trigger:manual',
-            config: n.data?.config || {},
-            label: n.data?.label || 'Node',
-          },
-        }))
-        
-        const flowEdges: Edge[] = parsedEdges.map((e: any) => ({
-          ...e,
-          ...(e.sourceHandle === 'tool' ? toolEdgeOptions : defaultEdgeOptions),
-        }))
-
-        setNodes(normalizeNodesForSubflows(flowNodes))
-        setEdges(flowEdges)
+        const flow = buildImportedFlow({
+          nodes: parsedNodes,
+          edges: parsedEdges,
+        })
+        setNodes(normalizeNodesForSubflows(flow.nodes))
+        setEdges(flow.edges)
       } catch (err) {
         console.error('Failed to parse pipeline data:', err)
       }
@@ -453,15 +520,14 @@ function PipelineEditor() {
   const saveMutation = useMutation({
     mutationFn: async (nextStatus?: Pipeline['status']) => {
       if (!id) return
-      const flowNodes = normalizeNodesForSubflows(nodes).map(({ type: _t, ...rest }) => rest)
-      const flowEdges = edges.map(({ ...rest }) => rest)
-      
+      const definition = buildCurrentDefinition()
+
       return api.pipelines.update(id, {
         name: pipelineName,
         description: pipelineDescription,
-        nodes: JSON.stringify(flowNodes),
-        edges: JSON.stringify(flowEdges),
-        viewport: JSON.stringify(getViewport()),
+        nodes: JSON.stringify(definition.nodes),
+        edges: JSON.stringify(definition.edges),
+        viewport: JSON.stringify(definition.viewport),
         status: nextStatus || pipelineStatus,
       })
     },
@@ -478,6 +544,157 @@ function PipelineEditor() {
     onError: (err) => {
       addToast({ type: 'error', title: 'Failed to save', message: err.message })
       setIsSaving(false)
+    },
+  })
+
+  const appendDefinitionToCanvas = useCallback((definition: FlowDefinitionDocument, sourceName: string) => {
+    const importedFlow = buildImportedFlow(definition)
+
+    if (importedFlow.nodes.length === 0) {
+      addToast({
+        type: 'warning',
+        title: 'Nothing to add',
+        message: 'The selected template does not contain any nodes.',
+      })
+      return
+    }
+
+    const importedNodesById = new Map(importedFlow.nodes.map((node) => [node.id, node]))
+    const importedBounds = importedFlow.nodes.map((node) => getNodeBounds(node, importedNodesById))
+    const minX = Math.min(...importedBounds.map((bounds) => bounds.x))
+    const minY = Math.min(...importedBounds.map((bounds) => bounds.y))
+    const maxX = Math.max(...importedBounds.map((bounds) => bounds.x + bounds.width))
+    const maxY = Math.max(...importedBounds.map((bounds) => bounds.y + bounds.height))
+
+    const wrapperBounds = reactFlowWrapper.current?.getBoundingClientRect()
+    const viewportCenter = wrapperBounds
+      ? screenToFlowPosition({
+        x: wrapperBounds.left + (wrapperBounds.width / 2),
+        y: wrapperBounds.top + (wrapperBounds.height / 2),
+      })
+      : { x: minX, y: minY }
+
+    const delta = {
+      x: viewportCenter.x - ((minX + maxX) / 2) + 40,
+      y: viewportCenter.y - ((minY + maxY) / 2) + 32,
+    }
+
+    const nodeIdMap = new Map<string, string>()
+    importedFlow.nodes.forEach((node) => {
+      nodeIdMap.set(node.id, buildGeneratedNodeId(node))
+    })
+
+    const firstInsertedNodeId = nodeIdMap.get(importedFlow.nodes[0].id) ?? null
+
+    const insertedNodes = importedFlow.nodes.map((node) => {
+      const absolutePosition = getAbsoluteNodePosition(node, importedNodesById)
+      const hasParent = Boolean(node.parentId && importedNodesById.has(node.parentId))
+      const parentId = hasParent && node.parentId ? nodeIdMap.get(node.parentId) : undefined
+      const nextNode: Node = {
+        ...node,
+        id: nodeIdMap.get(node.id)!,
+        parentId,
+        position: hasParent
+          ? { x: node.position.x, y: node.position.y }
+          : {
+            x: absolutePosition.x + delta.x,
+            y: absolutePosition.y + delta.y,
+          },
+        selected: nodeIdMap.get(node.id) === firstInsertedNodeId,
+        dragging: false,
+        data: {
+          ...node.data,
+        },
+      }
+
+      if (!parentId) {
+        nextNode.extent = undefined
+      }
+
+      return nextNode
+    })
+
+    let droppedEdgeCount = 0
+    const insertedEdges = importedFlow.edges.flatMap((edge) => {
+      const source = nodeIdMap.get(edge.source)
+      const target = nodeIdMap.get(edge.target)
+
+      if (!source || !target) {
+        droppedEdgeCount += 1
+        return []
+      }
+
+      return [{
+        ...edge,
+        id: `edge-${crypto.randomUUID()}`,
+        source,
+        target,
+        selected: false,
+      }]
+    })
+
+    setNodes((currentNodes) => normalizeNodesForSubflows([
+      ...currentNodes.map((node) => ({ ...node, selected: false })),
+      ...insertedNodes,
+    ]))
+    setEdges((currentEdges) => currentEdges.concat(insertedEdges))
+    setSelectedNodeId(firstInsertedNodeId)
+    setContextMenu(null)
+
+    addToast({
+      type: 'success',
+      title: 'Added to current pipeline',
+      message: `${sourceName || 'Template'} was appended to the canvas.`,
+    })
+
+    if (hasReturnNode(nodes) && hasReturnNode(importedFlow.nodes)) {
+      addToast({
+        type: 'warning',
+        title: 'Pipeline needs cleanup before save',
+        message: 'The inserted definition adds another Return node. Keep only one Return node before saving.',
+        duration: 7000,
+      })
+    }
+
+    if (droppedEdgeCount > 0) {
+      addToast({
+        type: 'warning',
+        title: 'Some connections were skipped',
+        message: `${droppedEdgeCount} imported connection${droppedEdgeCount === 1 ? '' : 's'} could not be mapped to inserted nodes.`,
+        duration: 6500,
+      })
+    }
+  }, [addToast, nodes, screenToFlowPosition, setEdges, setNodes, setSelectedNodeId])
+
+  const saveTemplateMutation = useMutation({
+    mutationFn: (payload: { name: string; description?: string }) => api.templates.create({
+      name: payload.name,
+      description: payload.description || undefined,
+      definition: buildCurrentDefinition(),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] })
+      setShowSaveTemplateModal(false)
+      setTemplateDraftName('')
+      setTemplateDraftDescription('')
+      addToast({ type: 'success', title: 'Template saved from current pipeline' })
+    },
+    onError: (err) => {
+      addToast({ type: 'error', title: 'Failed to save template', message: err.message })
+    },
+  })
+
+  const appendTemplateMutation = useMutation({
+    mutationFn: (templateId: string) => api.templates.get(templateId),
+    onSuccess: (template) => {
+      appendDefinitionToCanvas(template.definition, template.name)
+      setShowTemplateLibraryModal(false)
+    },
+    onError: (err) => {
+      addToast({ type: 'error', title: 'Failed to load template', message: err.message })
+    },
+    onSettled: () => {
+      setActiveTemplateId(null)
     },
   })
 
@@ -528,6 +745,71 @@ function PipelineEditor() {
     setPipelineDescription(pipeline?.description || '')
     setEditingDetails(false)
   }, [pipeline])
+
+  const handleOpenSaveTemplateModal = useCallback(() => {
+    setTemplateMenuPosition(null)
+    setTemplateDraftName(
+      pipelineName.trim() ? `${pipelineName.trim()} Template` : 'Untitled Template',
+    )
+    setTemplateDraftDescription(pipelineDescription || '')
+    setShowSaveTemplateModal(true)
+  }, [pipelineDescription, pipelineName])
+
+  const handleSubmitSaveTemplate = useCallback(() => {
+    const name = templateDraftName.trim()
+
+    if (!name) {
+      addToast({
+        type: 'warning',
+        title: 'Template name is required',
+        message: 'Give the template a name before saving it.',
+      })
+      return
+    }
+
+    saveTemplateMutation.mutate({
+      name,
+      description: templateDraftDescription.trim() || undefined,
+    })
+  }, [addToast, saveTemplateMutation, templateDraftDescription, templateDraftName])
+
+  const handleExportJSON = useCallback(() => {
+    const document = buildPipelineDocument({
+      name: pipelineName.trim() || 'Untitled Pipeline',
+      description: pipelineDescription,
+      status: pipelineStatus,
+      definition: buildCurrentDefinition(),
+    })
+
+    downloadJSON(
+      sanitizeFilename(pipelineName.trim() || 'pipeline', 'pipeline'),
+      document,
+    )
+
+    addToast({ type: 'success', title: 'Pipeline exported as JSON' })
+  }, [addToast, buildCurrentDefinition, pipelineDescription, pipelineName, pipelineStatus])
+
+  const handleAddJSONTemplate = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+
+    if (!file) {
+      return
+    }
+
+    try {
+      const raw = await file.text()
+      const parsed = JSON.parse(raw)
+      const document = extractSingleDefinitionDocument(parsed)
+      appendDefinitionToCanvas(document.definition, document.name || file.name)
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Failed to add JSON template',
+        message: err instanceof Error ? err.message : 'Unknown error',
+      })
+    }
+  }, [addToast, appendDefinitionToCanvas])
 
   const handleExecutionHighlight = useCallback((data: {
     nodeIds: string[]
@@ -660,12 +942,18 @@ function PipelineEditor() {
   }, [addToast, nodes, screenToFlowPosition, setNodes, setSelectedNodeId])
 
   const onDragOver = useCallback((event: React.DragEvent) => {
+    if (!isFlowInteractive) {
+      return
+    }
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
-  }, [])
+  }, [isFlowInteractive])
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
+      if (!isFlowInteractive) {
+        return
+      }
       event.preventDefault()
 
       const type = event.dataTransfer.getData('application/reactflow/type')
@@ -684,7 +972,7 @@ function PipelineEditor() {
         },
       )
     },
-    [createNodeAtPosition],
+    [createNodeAtPosition, isFlowInteractive],
   )
 
   const onNodesChangeHandler: OnNodesChange = useCallback(
@@ -900,6 +1188,50 @@ function PipelineEditor() {
   const selectedNode = nodes.find((n) => n.id === selectedNodeId)
   const activeNodeLog = activeNodeLogId ? nodeLogs[activeNodeLogId] : null
   const activeNodeLogNode = activeNodeLogId ? nodes.find((node) => node.id === activeNodeLogId) : undefined
+  const templateMenuItems: ContextMenuItem[] = [
+    {
+      label: 'Save as Template',
+      icon: <Copy className="w-3.5 h-3.5" />,
+      onClick: handleOpenSaveTemplateModal,
+    },
+    {
+      label: 'Add Template',
+      icon: <Workflow className="w-3.5 h-3.5" />,
+      onClick: () => setShowTemplateLibraryModal(true),
+    },
+    {
+      label: 'Add JSON Template',
+      icon: <FileJson className="w-3.5 h-3.5" />,
+      onClick: () => addJSONTemplateInputRef.current?.click(),
+    },
+    {
+      label: 'Export JSON',
+      icon: <Download className="w-3.5 h-3.5" />,
+      onClick: handleExportJSON,
+    },
+  ]
+  const handleTemplateMenuToggle = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (templateMenuPosition) {
+      setTemplateMenuPosition(null)
+      return
+    }
+
+    const buttonRect = event.currentTarget.getBoundingClientRect()
+    setContextMenu(null)
+    setTemplateMenuPosition({
+      x: buttonRect.left,
+      y: buttonRect.bottom + 8,
+    })
+  }, [templateMenuPosition])
+  const handleZoomIn = useCallback(() => {
+    void zoomIn({ duration: 180 })
+  }, [zoomIn])
+  const handleZoomOut = useCallback(() => {
+    void zoomOut({ duration: 180 })
+  }, [zoomOut])
+  const handleFitCanvas = useCallback(() => {
+    void fitCanvasView({ padding: 0.2, duration: 220 })
+  }, [fitCanvasView])
 
   const updateNodeConfig = useCallback((config: Record<string, unknown>) => {
     if (!selectedNodeId) return
@@ -1154,7 +1486,7 @@ function PipelineEditor() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isBlockingOverlayOpen) {
+      if (isCanvasInteractionDisabled) {
         return
       }
 
@@ -1193,10 +1525,15 @@ function PipelineEditor() {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [selectedNodeId, selectedNodeIds, duplicateNode, disconnectNode, handleSave, isBlockingOverlayOpen, removeNodesByIds])
+  }, [selectedNodeId, selectedNodeIds, duplicateNode, disconnectNode, handleSave, isCanvasInteractionDisabled, removeNodesByIds])
 
   const handleNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
     event.preventDefault()
+    setTemplateMenuPosition(null)
+    if (!isFlowInteractive) {
+      setContextMenu(null)
+      return
+    }
     if (node.selected && selectedNodes.length > 1) {
       setSelectedNodeId(null)
       setContextMenu({
@@ -1280,10 +1617,15 @@ function PipelineEditor() {
       },
     ]
     setContextMenu({ x: event.clientX, y: event.clientY, items })
-  }, [addToast, buildSelectionContextMenuItems, removeNodesByIds, selectedNodes, setSelectedNodeId, setNodes, setEdges, ungroupNode])
+  }, [addToast, buildSelectionContextMenuItems, isFlowInteractive, removeNodesByIds, selectedNodes, setSelectedNodeId, setNodes, setEdges, ungroupNode])
 
   const handleEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
     event.preventDefault()
+    setTemplateMenuPosition(null)
+    if (!isFlowInteractive) {
+      setContextMenu(null)
+      return
+    }
     const items: ContextMenuItem[] = [
       {
         label: 'Delete connection',
@@ -1295,21 +1637,31 @@ function PipelineEditor() {
       },
     ]
     setContextMenu({ x: event.clientX, y: event.clientY, items })
-  }, [setEdges])
+  }, [isFlowInteractive, setEdges])
 
   const handleSelectionContextMenu = useCallback((event: MouseEvent, selection: Node[]) => {
     event.preventDefault()
+    setTemplateMenuPosition(null)
+    if (!isFlowInteractive) {
+      setContextMenu(null)
+      return
+    }
     setSelectedNodeId(null)
     setContextMenu({
       x: event.clientX,
       y: event.clientY,
       items: buildSelectionContextMenuItems(selection),
     })
-  }, [buildSelectionContextMenuItems, setSelectedNodeId])
+  }, [buildSelectionContextMenuItems, isFlowInteractive, setSelectedNodeId])
 
   const handlePaneContextMenu = useCallback((event: React.MouseEvent) => {
     event.preventDefault()
 
+    setTemplateMenuPosition(null)
+    if (!isFlowInteractive) {
+      setContextMenu(null)
+      return
+    }
     setSelectedNodeId(null)
     setContextMenu({
       x: event.clientX,
@@ -1319,7 +1671,7 @@ function PipelineEditor() {
       searchPlaceholder: 'Search nodes by name...',
       emptyMessage: 'No nodes match your search.',
     })
-  }, [buildPaneContextMenuItems, setSelectedNodeId])
+  }, [buildPaneContextMenuItems, isFlowInteractive, setSelectedNodeId])
 
   const renderedNodes = nodes.map((node) => {
     const isHighlightMode = highlightedNodes.size > 0
@@ -1421,11 +1773,15 @@ function PipelineEditor() {
 
   return (
     <div className="flex h-screen bg-bg">
-      {/* Left: Node Palette */}
-      <NodePalette onDragStart={onDragStart} />
-
-      {/* Center: Canvas */}
       <div className="flex-1 flex flex-col min-w-0">
+        <input
+          ref={addJSONTemplateInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={handleAddJSONTemplate}
+        />
+
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 bg-bg-elevated border-b border-border">
           <div className="flex items-center gap-3">
@@ -1502,7 +1858,7 @@ function PipelineEditor() {
             </Badge>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               size="sm"
@@ -1516,6 +1872,7 @@ function PipelineEditor() {
               variant="secondary"
               size="sm"
               onClick={() => {
+                setTemplateMenuPosition(null)
                 if (showExecutionLog) {
                   handleCloseExecutionLog()
                   return
@@ -1526,6 +1883,16 @@ function PipelineEditor() {
             >
               <ListChecks className="w-4 h-4" />
               Log
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleTemplateMenuToggle}
+              className={templateMenuPosition ? 'text-accent border-accent/50' : ''}
+            >
+              <Workflow className="w-4 h-4" />
+              Template
+              {templateMenuPosition ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </Button>
             <Button
               variant="secondary"
@@ -1548,7 +1915,7 @@ function PipelineEditor() {
         </div>
 
         {/* Canvas */}
-        <div ref={reactFlowWrapper} className="flex-1">
+        <div ref={reactFlowWrapper} className="flex-1 min-h-0">
           <ReactFlow
             nodes={renderedNodes}
             edges={renderedEdges}
@@ -1559,6 +1926,11 @@ function PipelineEditor() {
             onDragOver={onDragOver}
             onNodeDragStop={handleNodeDragStop}
             onNodeClick={(_, node) => {
+              setTemplateMenuPosition(null)
+              if (!isFlowInteractive) {
+                setContextMenu(null)
+                return
+              }
               setSelectedNodeId(node.id)
               setContextMenu(null)
             }}
@@ -1567,18 +1939,26 @@ function PipelineEditor() {
             onEdgeContextMenu={handleEdgeContextMenu}
             onPaneContextMenu={handlePaneContextMenu}
             onPaneClick={() => {
+              setTemplateMenuPosition(null)
               setSelectedNodeId(null)
               setContextMenu(null)
             }}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
-            panActivationKeyCode={isBlockingOverlayOpen ? null : 'Space'}
-            deleteKeyCode={isBlockingOverlayOpen ? null : 'Backspace'}
-            selectionKeyCode={isBlockingOverlayOpen ? null : 'Shift'}
-            multiSelectionKeyCode={isBlockingOverlayOpen ? null : undefined}
-            zoomActivationKeyCode={isBlockingOverlayOpen ? null : undefined}
-            disableKeyboardA11y={isBlockingOverlayOpen}
+            nodesDraggable={isFlowInteractive && !isCanvasInteractionBlocked}
+            nodesConnectable={isFlowInteractive && !isCanvasInteractionBlocked}
+            elementsSelectable={isFlowInteractive && !isCanvasInteractionBlocked}
+            panOnDrag={isFlowInteractive && !isCanvasInteractionBlocked}
+            zoomOnScroll={isFlowInteractive && !isCanvasInteractionBlocked}
+            zoomOnPinch={isFlowInteractive && !isCanvasInteractionBlocked}
+            zoomOnDoubleClick={isFlowInteractive && !isCanvasInteractionBlocked}
+            panActivationKeyCode={isCanvasInteractionDisabled ? null : 'Space'}
+            deleteKeyCode={isCanvasInteractionDisabled ? null : 'Backspace'}
+            selectionKeyCode={isCanvasInteractionDisabled ? null : 'Shift'}
+            multiSelectionKeyCode={isCanvasInteractionDisabled ? null : undefined}
+            zoomActivationKeyCode={isCanvasInteractionDisabled ? null : undefined}
+            disableKeyboardA11y={isCanvasInteractionDisabled}
             fitView
             fitViewOptions={{ padding: 0.2 }}
             minZoom={0.1}
@@ -1586,46 +1966,110 @@ function PipelineEditor() {
             snapToGrid
             snapGrid={[15, 15]}
           >
-            <Controls position="bottom-left" />
             <Background color="#1e2d3d" gap={20} size={1} />
-            
-            <Panel position="bottom-right" className="!m-4">
-              <div className="bg-bg-elevated border border-border rounded-lg shadow-lg p-2 flex gap-1">
-                {selectedNodeId && (
-                  <>
-                    {selectedNode?.data?.type !== VISUAL_GROUP_TYPE && (
-                      <Button variant="ghost" size="sm" onClick={duplicateNode} title="Duplicate">
-                        <Copy className="w-4 h-4" />
-                      </Button>
-                    )}
-                    <Button variant="ghost" size="sm" onClick={deleteNode} title="Delete">
-                      <Trash2 className="w-4 h-4 text-red-400" />
-                    </Button>
-                  </>
-                )}
+
+            <Panel position="top-left" className="!m-4 flex max-w-[calc(100vw-2rem)] flex-col gap-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setIsNodePaletteOpen((current) => !current)}
+                className="w-fit shadow-lg"
+              >
+                <List className="w-4 h-4" />
+                Nodes
+                {isNodePaletteOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </Button>
+
+              {isNodePaletteOpen && <NodePalette onDragStart={onDragStart} />}
+            </Panel>
+
+            <Panel position="bottom-left" className="!m-4">
+              <div className="flex w-fit items-center gap-0.5 rounded-xl border border-border bg-bg-elevated/95 p-1 shadow-xl backdrop-blur">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleZoomIn}
+                  disabled={isCanvasInteractionBlocked}
+                  className="h-7 min-w-7 rounded-lg px-1.5 text-text-muted hover:text-text"
+                  title="Zoom in"
+                  aria-label="Zoom in"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleZoomOut}
+                  disabled={isCanvasInteractionBlocked}
+                  className="h-7 min-w-7 rounded-lg px-1.5 text-text-muted hover:text-text"
+                  title="Zoom out"
+                  aria-label="Zoom out"
+                >
+                  <Minus className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleFitCanvas}
+                  disabled={isCanvasInteractionBlocked}
+                  className="h-7 min-w-7 rounded-lg px-1.5 text-text-muted hover:text-text"
+                  title="Fit view"
+                  aria-label="Fit view"
+                >
+                  <ScanSearch className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsFlowInteractive((current) => !current)}
+                  disabled={isCanvasInteractionBlocked}
+                  className={isFlowInteractive
+                    ? 'h-7 min-w-7 rounded-lg border border-accent/30 bg-accent/10 px-1.5 text-accent hover:bg-accent/15 hover:text-accent-hover'
+                    : 'h-7 min-w-7 rounded-lg border border-amber-500/30 bg-amber-500/10 px-1.5 text-amber-300 hover:bg-amber-500/15 hover:text-amber-200'}
+                  title={isFlowInteractive ? 'Lock interactivity' : 'Unlock interactivity'}
+                  aria-label={isFlowInteractive ? 'Lock interactivity' : 'Unlock interactivity'}
+                >
+                  {isFlowInteractive ? <LockOpen className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                </Button>
               </div>
             </Panel>
+
+            {selectedNode && !showExecutionLog && (
+              <Panel position="top-right" className="!m-4 flex max-w-[calc(100vw-2rem)]">
+                <NodeConfigPanel
+                  pipelineId={id!}
+                  nodes={nodes}
+                  edges={edges}
+                  nodeId={selectedNode.id}
+                  nodeType={selectedNode.data.type as NodeType}
+                  nodeLabel={selectedNode.data.label || 'Node'}
+                  config={selectedNode.data.config || {}}
+                  onUpdate={updateNodeConfig}
+                  onLabelChange={updateNodeLabel}
+                  onRemoveSourceHandles={removeSelectedNodeSourceHandles}
+                  onOverlayOpenChange={setIsBlockingOverlayOpen}
+                  onClose={() => setSelectedNodeId(null)}
+                />
+              </Panel>
+            )}
+            
+            {selectedNodeId && (
+              <Panel position="bottom-right" className="!m-4">
+                <div className="bg-bg-elevated border border-border rounded-lg shadow-lg p-2 flex gap-1">
+                  {selectedNode?.data?.type !== VISUAL_GROUP_TYPE && (
+                    <Button variant="ghost" size="sm" onClick={duplicateNode} title="Duplicate">
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                  )}
+                  <Button variant="ghost" size="sm" onClick={deleteNode} title="Delete">
+                    <Trash2 className="w-4 h-4 text-red-400" />
+                  </Button>
+                </div>
+              </Panel>
+            )}
           </ReactFlow>
         </div>
       </div>
-
-      {/* Right: Config Panel */}
-      {selectedNode && !showExecutionLog && (
-        <NodeConfigPanel
-          pipelineId={id!}
-          nodes={nodes}
-          edges={edges}
-          nodeId={selectedNode.id}
-          nodeType={selectedNode.data.type as NodeType}
-          nodeLabel={selectedNode.data.label || 'Node'}
-          config={selectedNode.data.config || {}}
-          onUpdate={updateNodeConfig}
-          onLabelChange={updateNodeLabel}
-          onRemoveSourceHandles={removeSelectedNodeSourceHandles}
-          onOverlayOpenChange={setIsBlockingOverlayOpen}
-          onClose={() => setSelectedNodeId(null)}
-        />
-      )}
 
       {/* Right: Execution Log */}
       {showExecutionLog && (
@@ -1659,6 +2103,133 @@ function PipelineEditor() {
           onClose={() => setContextMenu(null)}
         />
       )}
+
+      {templateMenuPosition && (
+        <ContextMenu
+          x={templateMenuPosition.x}
+          y={templateMenuPosition.y}
+          items={templateMenuItems}
+          onClose={() => setTemplateMenuPosition(null)}
+        />
+      )}
+
+      <Modal
+        open={showSaveTemplateModal}
+        title="Save Pipeline as Template"
+        description="Save the current in-memory canvas, including unsaved edits, as a reusable template."
+        onClose={() => {
+          if (!saveTemplateMutation.isPending) {
+            setShowSaveTemplateModal(false)
+          }
+        }}
+      >
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-text" htmlFor="template-name">
+              Template name
+            </label>
+            <Input
+              id="template-name"
+              value={templateDraftName}
+              onChange={(event) => setTemplateDraftName(event.target.value)}
+              placeholder="My reusable template"
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  handleSubmitSaveTemplate()
+                }
+              }}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-text" htmlFor="template-description">
+              Description
+            </label>
+            <Textarea
+              id="template-description"
+              value={templateDraftDescription}
+              onChange={(event) => setTemplateDraftDescription(event.target.value)}
+              placeholder="Explain when this template is useful"
+              rows={3}
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setShowSaveTemplateModal(false)}
+              disabled={saveTemplateMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSubmitSaveTemplate} loading={saveTemplateMutation.isPending}>
+              <Save className="w-4 h-4" />
+              Save Template
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={showTemplateLibraryModal}
+        title="Add Saved Template"
+        description="Append a saved template to the current pipeline. Node and edge IDs will be remapped automatically."
+        onClose={() => {
+          if (!appendTemplateMutation.isPending) {
+            setShowTemplateLibraryModal(false)
+          }
+        }}
+      >
+        {areTemplatesLoading ? (
+          <div className="py-8 text-sm text-text-muted">Loading templates...</div>
+        ) : templates.length === 0 ? (
+          <div className="space-y-3 py-4">
+            <p className="text-sm text-text-muted">
+              No saved templates yet. Save this pipeline as a template first, or import JSON on the Templates page.
+            </p>
+            <div className="flex justify-end">
+              <Button variant="ghost" onClick={() => setShowTemplateLibraryModal(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {templates.map((template) => {
+              const isLoadingTemplate = activeTemplateId === template.id && appendTemplateMutation.isPending
+
+              return (
+                <div
+                  key={template.id}
+                  className="rounded-xl border border-border bg-bg px-4 py-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-semibold text-text">{template.name}</h3>
+                      <p className="mt-1 text-xs text-text-muted">
+                        {template.description?.trim() || 'No description'}
+                      </p>
+                    </div>
+                    <Badge>{template.category}</Badge>
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setActiveTemplateId(template.id)
+                        appendTemplateMutation.mutate(template.id)
+                      }}
+                      loading={isLoadingTemplate}
+                    >
+                      <Workflow className="w-4 h-4" />
+                      Add to Current Pipeline
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

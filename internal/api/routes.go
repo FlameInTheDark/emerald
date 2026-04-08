@@ -19,9 +19,11 @@ import (
 	"github.com/FlameInTheDark/automator/internal/db"
 	"github.com/FlameInTheDark/automator/internal/db/query"
 	"github.com/FlameInTheDark/automator/internal/pipeline"
+	"github.com/FlameInTheDark/automator/internal/pipelineops"
 	"github.com/FlameInTheDark/automator/internal/scheduler"
 	"github.com/FlameInTheDark/automator/internal/shellcmd"
 	"github.com/FlameInTheDark/automator/internal/skills"
+	"github.com/FlameInTheDark/automator/internal/templateops"
 	"github.com/FlameInTheDark/automator/internal/ws"
 )
 
@@ -84,12 +86,15 @@ func New(cfg Config) *fiber.App {
 	userStore := query.NewUserStore(cfg.DB.DB, encryptor)
 
 	pipelineStore := query.NewPipelineStore(cfg.DB.DB)
+	templateStore := query.NewTemplateStore(cfg.DB.DB)
 	llmProviderStore := query.NewLLMProviderStore(cfg.DB.DB, encryptor)
 	executionStore := query.NewExecutionStore(cfg.DB.DB)
 	llmProviderHandler := handlers.NewLLMProviderHandler(llmProviderStore)
 	dashboardHandler := handlers.NewDashboardHandler(clusterStore, pipelineStore, executionStore, channelStore, cfg.Scheduler)
 	authHandler := handlers.NewAuthHandler(authService)
 	userHandler := handlers.NewUserHandler(userStore, authService)
+	pipelineService := pipelineops.NewService(pipelineStore, cfg.Scheduler)
+	templateHandler := handlers.NewTemplateHandler(templateops.NewService(templateStore, pipelineService))
 
 	pipelineRunHandler := handlers.NewPipelineRunHandler(
 		pipelineStore,
@@ -142,7 +147,19 @@ func New(cfg Config) *fiber.App {
 	pipelines.Get("/:id", pipelineHandler.Get)
 	pipelines.Put("/:id", pipelineHandler.Update)
 	pipelines.Delete("/:id", pipelineHandler.Delete)
+	pipelines.Get("/:id/export", pipelineHandler.Export)
 	pipelines.Post("/:id/run", pipelineRunHandler.Run)
+
+	templates := api.Group("/templates")
+	templates.Get("/", templateHandler.List)
+	templates.Post("/", templateHandler.Create)
+	templates.Post("/import", templateHandler.Import)
+	templates.Get("/export", templateHandler.ExportAll)
+	templates.Get("/:id", templateHandler.Get)
+	templates.Delete("/:id", templateHandler.Delete)
+	templates.Post("/:id/clone", templateHandler.Clone)
+	templates.Post("/:id/pipelines", templateHandler.CreatePipeline)
+	templates.Get("/:id/export", templateHandler.Export)
 
 	llmProviders := api.Group("/llm-providers")
 	llmProviders.Get("/", llmProviderHandler.List)

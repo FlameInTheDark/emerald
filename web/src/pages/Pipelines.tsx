@@ -1,25 +1,19 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Plus, GitBranch, Trash2, ExternalLink, Power } from 'lucide-react'
+import { Plus, GitBranch, Trash2, ExternalLink, Power, Download } from 'lucide-react'
 import { api } from '../api/client'
 import { Card, CardContent } from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
-import { Label, Textarea } from '../components/ui/Form'
+import { Label } from '../components/ui/Form'
 import Badge from '../components/ui/Badge'
+import Modal from '../components/ui/Modal'
 import Skeleton from '../components/ui/Skeleton'
 import { formatDate } from '../lib/utils'
+import { downloadJSON, sanitizeFilename } from '../lib/download'
 import { useUIStore } from '../store/ui'
-
-interface Pipeline {
-  id: string
-  name: string
-  description: string | null
-  status: string
-  created_at: string
-  updated_at: string
-}
+import type { Pipeline } from '../types'
 
 export default function Pipelines() {
   const queryClient = useQueryClient()
@@ -27,6 +21,8 @@ export default function Pipelines() {
   const [showCreate, setShowCreate] = useState(false)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [exportingPipelineId, setExportingPipelineId] = useState<string | null>(null)
+  const [pipelinePendingDelete, setPipelinePendingDelete] = useState<Pipeline | null>(null)
 
   const { data: pipelines, isLoading } = useQuery<Pipeline[]>({
     queryKey: ['pipelines'],
@@ -53,6 +49,7 @@ export default function Pipelines() {
     mutationFn: (id: string) => api.pipelines.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pipelines'] })
+      setPipelinePendingDelete(null)
       addToast({ type: 'success', title: 'Pipeline deleted' })
     },
     onError: (err) => {
@@ -75,6 +72,26 @@ export default function Pipelines() {
     e.preventDefault()
     if (!name.trim()) return
     createMutation.mutate()
+  }
+
+  const handleExportPipeline = async (pipeline: Pipeline) => {
+    try {
+      setExportingPipelineId(pipeline.id)
+      const document = await api.pipelines.export(pipeline.id)
+      downloadJSON(
+        sanitizeFilename(pipeline.name || 'pipeline', 'pipeline'),
+        document,
+      )
+      addToast({ type: 'success', title: 'Pipeline exported as JSON' })
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Failed to export pipeline',
+        message: err instanceof Error ? err.message : 'Unknown error',
+      })
+    } finally {
+      setExportingPipelineId(null)
+    }
   }
 
   return (
@@ -171,6 +188,15 @@ export default function Pipelines() {
                     <Button
                       variant="ghost"
                       size="sm"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity"
+                      loading={exportingPipelineId === pipeline.id}
+                      onClick={() => handleExportPipeline(pipeline)}
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => toggleStatusMutation.mutate({
                         id: pipeline.id,
                         status: pipeline.status === 'active' ? 'draft' : 'active',
@@ -182,7 +208,7 @@ export default function Pipelines() {
                       variant="ghost"
                       size="sm"
                       className="opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => deleteMutation.mutate(pipeline.id)}
+                      onClick={() => setPipelinePendingDelete(pipeline)}
                     >
                       <Trash2 className="w-3.5 h-3.5 text-red-400" />
                     </Button>
@@ -212,6 +238,64 @@ export default function Pipelines() {
           ))}
         </div>
       )}
+
+      <Modal
+        open={pipelinePendingDelete !== null}
+        title="Delete Pipeline"
+        description="This will permanently remove the pipeline and its saved graph."
+        onClose={() => {
+          if (!deleteMutation.isPending) {
+            setPipelinePendingDelete(null)
+          }
+        }}
+        className="max-w-md"
+      >
+        {pipelinePendingDelete && (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-red-600/30 bg-red-600/10 px-4 py-3">
+              <p className="text-sm font-medium text-text">{pipelinePendingDelete.name}</p>
+              <div className="mt-2 flex items-center gap-2">
+                <Badge
+                  variant={
+                    pipelinePendingDelete.status === 'active'
+                      ? 'success'
+                      : pipelinePendingDelete.status === 'draft'
+                        ? 'warning'
+                        : 'default'
+                  }
+                >
+                  {pipelinePendingDelete.status}
+                </Badge>
+                <span className="text-xs text-text-dimmed">
+                  Updated {formatDate(pipelinePendingDelete.updated_at, pipelinePendingDelete.created_at)}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-sm text-text-muted">
+              This action cannot be undone.
+            </p>
+
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                onClick={() => setPipelinePendingDelete(null)}
+                disabled={deleteMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                loading={deleteMutation.isPending}
+                onClick={() => deleteMutation.mutate(pipelinePendingDelete.id)}
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Pipeline
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

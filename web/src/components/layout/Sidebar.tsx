@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { 
-  LayoutDashboard, GitBranch, Settings, MessageSquare,
+  LayoutDashboard, GitBranch, Settings, MessageSquare, Copy,
   ChevronLeft, ChevronRight, LogOut
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
@@ -13,6 +13,7 @@ import type { AuthSession } from '../../types'
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
   { icon: GitBranch, label: 'Pipelines', path: '/pipelines' },
+  { icon: Copy, label: 'Templates', path: '/templates' },
   { icon: MessageSquare, label: 'LLM Chat', path: '/chat' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ]
