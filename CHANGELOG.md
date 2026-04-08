@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/FlameInTheDark/automator/compare/v1.1.0...v1.2.0) (2026-04-08)
+
+
+### Features
+
+* templates and UI update ([a15c90c](https://github.com/FlameInTheDark/automator/commit/a15c90ce024ce2ebd1741bc197374c3f5643cb83))
+
 # [1.1.0](https://github.com/FlameInTheDark/automator/compare/v1.0.0...v1.1.0) (2026-04-08)
 
 
