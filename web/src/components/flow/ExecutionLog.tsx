@@ -233,6 +233,7 @@ export default function ExecutionLog({ pipelineId, isOpen, onClose, onExecutionS
   const { addToast } = useUIStore()
   const [selectedExecution, setSelectedExecution] = useState<string | null>(null)
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
+  const [nodeResultsCollapsed, setNodeResultsCollapsed] = useState(false)
 
   const { data: executions, isLoading } = useQuery<Execution[]>({
     queryKey: ['executions', pipelineId],
@@ -383,7 +384,7 @@ export default function ExecutionLog({ pipelineId, isOpen, onClose, onExecutionS
   const hasAnyExecutions = activeExecutions.length > 0 || (executions?.length ?? 0) > 0
 
   return (
-    <div className="w-96 bg-bg-elevated border-l border-border flex flex-col h-full">
+    <div className="flex w-[22rem] max-w-[calc(100vw-2rem)] max-h-[calc(100vh-9rem)] min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-xl">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <h3 className="text-sm font-semibold text-text">Execution Log</h3>
@@ -545,89 +546,105 @@ export default function ExecutionLog({ pipelineId, isOpen, onClose, onExecutionS
       {/* Node Execution Details */}
       {executionDetail && (
         <div className="border-t border-border max-h-1/2 overflow-y-auto">
-          <div className="px-4 py-2 border-b border-border bg-bg-overlay">
+          <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border bg-bg-overlay">
             <p className="text-xs font-medium text-text-muted">Node Results</p>
+            <button
+              type="button"
+              onClick={() => setNodeResultsCollapsed((current) => !current)}
+              className="inline-flex items-center gap-1 text-xs text-text-dimmed transition-colors hover:text-text"
+              aria-expanded={!nodeResultsCollapsed}
+              aria-label={nodeResultsCollapsed ? 'Expand node results' : 'Collapse node results'}
+            >
+              {nodeResultsCollapsed ? (
+                <ChevronRight className="w-3 h-3" />
+              ) : (
+                <ChevronDown className="w-3 h-3" />
+              )}
+              <span>{nodeResultsCollapsed ? 'Expand' : 'Collapse'}</span>
+            </button>
           </div>
-          <div className="divide-y divide-border">
-            {nodeExecutions.map((ne) => (
-              <div key={ne.id}>
-                <button
-                  onClick={() => toggleNode(ne.node_id)}
-                  className="w-full px-4 py-2.5 text-left flex items-center gap-2 hover:bg-bg-overlay transition-colors"
-                >
-                  {expandedNodes.has(ne.node_id) ? (
-                    <ChevronDown className="w-3 h-3 text-text-dimmed flex-shrink-0" />
-                  ) : (
-                    <ChevronRight className="w-3 h-3 text-text-dimmed flex-shrink-0" />
-                  )}
-                  {ne.status === 'completed' ? (
-                    <CheckCircle className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
-                  ) : ne.status === 'running' ? (
-                    <Clock className="w-3.5 h-3.5 text-amber-400 animate-pulse flex-shrink-0" />
-                  ) : (
-                    <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-text truncate">{ne.node_id}</p>
-                    <p className="text-xs text-text-dimmed truncate">{ne.node_type}</p>
-                  </div>
-                  {ne.started_at && ne.completed_at && (
-                    <span className="text-xs text-text-dimmed flex-shrink-0">
-                      {formatDuration(ne.started_at, ne.completed_at)}
-                    </span>
-                  )}
-                </button>
-
-                {expandedNodes.has(ne.node_id) && (
-                  <div className="px-4 pb-3 pl-10 space-y-2">
-                    {ne.error ? (
-                      <div className="bg-red-600/10 border border-red-600/30 rounded-lg p-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <AlertCircle className="w-3.5 h-3.5 text-red-400" />
-                          <span className="text-xs font-medium text-red-400">Error</span>
-                        </div>
-                        <pre className="text-xs text-red-300 whitespace-pre-wrap break-all font-mono">
-                          {ne.error}
-                        </pre>
-                      </div>
-                    ) : ne.status === 'running' ? (
-                      <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Clock className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-                          <span className="text-xs font-medium text-amber-300">Running</span>
-                        </div>
-                        <p className="text-xs text-amber-100/80">This node is currently executing.</p>
-                      </div>
+          {!nodeResultsCollapsed && (
+            <div className="divide-y divide-border">
+              {nodeExecutions.map((ne) => (
+                <div key={ne.id}>
+                  <button
+                    onClick={() => toggleNode(ne.node_id)}
+                    className="w-full px-4 py-2.5 text-left flex items-center gap-2 hover:bg-bg-overlay transition-colors"
+                  >
+                    {expandedNodes.has(ne.node_id) ? (
+                      <ChevronDown className="w-3 h-3 text-text-dimmed flex-shrink-0" />
                     ) : (
-                      ne.output && (
-                        <div className="bg-bg-input border border-border rounded-lg overflow-hidden">
-                          <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-bg-overlay">
-                            <Terminal className="w-3 h-3 text-text-dimmed" />
-                            <span className="text-xs text-text-muted">Output</span>
+                      <ChevronRight className="w-3 h-3 text-text-dimmed flex-shrink-0" />
+                    )}
+                    {ne.status === 'completed' ? (
+                      <CheckCircle className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+                    ) : ne.status === 'running' ? (
+                      <Clock className="w-3.5 h-3.5 text-amber-400 animate-pulse flex-shrink-0" />
+                    ) : (
+                      <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-text truncate">{ne.node_id}</p>
+                      <p className="text-xs text-text-dimmed truncate">{ne.node_type}</p>
+                    </div>
+                    {ne.started_at && ne.completed_at && (
+                      <span className="text-xs text-text-dimmed flex-shrink-0">
+                        {formatDuration(ne.started_at, ne.completed_at)}
+                      </span>
+                    )}
+                  </button>
+
+                  {expandedNodes.has(ne.node_id) && (
+                    <div className="px-4 pb-3 pl-10 space-y-2">
+                      {ne.error ? (
+                        <div className="bg-red-600/10 border border-red-600/30 rounded-lg p-3">
+                          <div className="flex items-center gap-2 mb-1">
+                            <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                            <span className="text-xs font-medium text-red-400">Error</span>
                           </div>
-                          <pre className="p-3 text-xs text-text font-mono overflow-x-auto whitespace-pre-wrap max-h-48">
-                            {(() => {
-                              try {
-                                const parsed = JSON.parse(ne.output)
-                                return JSON.stringify(parsed, null, 2)
-                              } catch {
-                                return ne.output
-                              }
-                            })()}
+                          <pre className="text-xs text-red-300 whitespace-pre-wrap break-all font-mono">
+                            {ne.error}
                           </pre>
                         </div>
-                      )
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-            {nodeExecutions.length === 0 && (
-              <div className="px-4 py-5 text-sm text-text-muted">
-                No node-level results were recorded for this execution.
-              </div>
-            )}
-          </div>
+                      ) : ne.status === 'running' ? (
+                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Clock className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                            <span className="text-xs font-medium text-amber-300">Running</span>
+                          </div>
+                          <p className="text-xs text-amber-100/80">This node is currently executing.</p>
+                        </div>
+                      ) : (
+                        ne.output && (
+                          <div className="bg-bg-input border border-border rounded-lg overflow-hidden">
+                            <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-bg-overlay">
+                              <Terminal className="w-3 h-3 text-text-dimmed" />
+                              <span className="text-xs text-text-muted">Output</span>
+                            </div>
+                            <pre className="p-3 text-xs text-text font-mono overflow-x-auto whitespace-pre-wrap max-h-48">
+                              {(() => {
+                                try {
+                                  const parsed = JSON.parse(ne.output)
+                                  return JSON.stringify(parsed, null, 2)
+                                } catch {
+                                  return ne.output
+                                }
+                              })()}
+                            </pre>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {nodeExecutions.length === 0 && (
+                <div className="px-4 py-5 text-sm text-text-muted">
+                  No node-level results were recorded for this execution.
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

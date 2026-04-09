@@ -81,7 +81,7 @@ func (e *LLMAgentNode) Execute(ctx context.Context, config json.RawMessage, inpu
 		systemPrompt += " Local skills are enabled for this run. Use the get_skill tool when you need the full text of one of the available skills."
 	}
 
-	resp, toolCalls, toolResults, err := llm.RunToolChat(
+	resp, toolCalls, toolResults, _, err := llm.RunToolChat(
 		ctx,
 		provider,
 		model,

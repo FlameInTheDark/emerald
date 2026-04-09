@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useId } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 
@@ -22,6 +22,9 @@ export default function Modal({
   children,
   className,
 }: ModalProps) {
+  const titleId = useId()
+  const descriptionId = useId()
+
   useEffect(() => {
     if (!open) {
       return
@@ -50,12 +53,18 @@ export default function Modal({
         }
       }}
     >
-      <div className={cn('w-full max-w-2xl rounded-2xl border border-border bg-bg-elevated shadow-2xl', className)}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={description ? descriptionId : undefined}
+        className={cn('w-full max-w-2xl rounded-2xl border border-border bg-bg-elevated shadow-2xl', className)}
+      >
         <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
           <div>
-            <h2 className="text-lg font-semibold text-text">{title}</h2>
+            <h2 id={titleId} className="text-lg font-semibold text-text">{title}</h2>
             {description && (
-              <p className="mt-1 text-sm text-text-muted">{description}</p>
+              <p id={descriptionId} className="mt-1 text-sm text-text-muted">{description}</p>
             )}
           </div>
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close modal">

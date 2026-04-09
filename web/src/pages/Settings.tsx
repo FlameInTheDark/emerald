@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Server, Shield, Brain, Plus, Trash2, Edit2, MessageSquare, Power, Users } from 'lucide-react'
+import { Server, Shield, Brain, Bot, Plus, Trash2, Edit2, MessageSquare, Power, Users } from 'lucide-react'
 import { api } from '../api/client'
 import { Card, CardContent } from '../components/ui/Card'
 import Button from '../components/ui/Button'
@@ -9,6 +9,7 @@ import { Label, Checkbox, Textarea } from '../components/ui/Form'
 import Badge from '../components/ui/Badge'
 import Skeleton from '../components/ui/Skeleton'
 import KubernetesClusterSettings from '../components/Settings/KubernetesClusterSettings'
+import AssistantProfilesSettings from '../components/Settings/AssistantProfilesSettings'
 import { useUIStore } from '../store/ui'
 import { cn } from '../lib/utils'
 import { AUTH_SESSION_QUERY_KEY, useAuthSession } from '../lib/auth'
@@ -173,44 +174,87 @@ function channelToForm(channel: Channel): ChannelFormState {
 }
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<'clusters' | 'kubernetes' | 'channels' | 'llm' | 'users'>('clusters')
+  const [activeTab, setActiveTab] = useState<'clusters' | 'kubernetes' | 'channels' | 'ai' | 'users'>('clusters')
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-text">Settings</h1>
-        <p className="text-text-muted mt-1">Configure clusters, channels, and LLM providers</p>
+        <p className="text-text-muted mt-1">Configure clusters, channels, AI, and workspace access</p>
       </div>
 
-      <div className="flex gap-1 p-1 bg-bg-input rounded-lg border border-border mb-6 w-fit">
-        {[
-          { id: 'clusters' as const, label: 'Proxmox Clusters', icon: Server },
-          { id: 'kubernetes' as const, label: 'Kubernetes Clusters', icon: Shield },
-          { id: 'channels' as const, label: 'Channels', icon: MessageSquare },
-          { id: 'llm' as const, label: 'LLM Providers', icon: Brain },
-          { id: 'users' as const, label: 'Users', icon: Users },
-        ].map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setActiveTab(id)}
-            className={cn(
-              'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all',
-              activeTab === id
-                ? 'bg-bg-elevated text-text shadow-sm'
-                : 'text-text-muted hover:text-text',
-            )}
-          >
-            <Icon className="w-4 h-4" />
-            {label}
-          </button>
-        ))}
+      <div className="mb-6 overflow-x-auto pb-1 -mb-1">
+        <div className="inline-flex min-w-max gap-1 rounded-lg border border-border bg-bg-input p-1">
+          {[
+            { id: 'clusters' as const, label: 'Proxmox Clusters', icon: Server },
+            { id: 'kubernetes' as const, label: 'Kubernetes Clusters', icon: Shield },
+            { id: 'channels' as const, label: 'Channels', icon: MessageSquare },
+            { id: 'ai' as const, label: 'AI', icon: Brain },
+            { id: 'users' as const, label: 'Users', icon: Users },
+          ].map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={cn(
+                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-all',
+                activeTab === id
+                  ? 'bg-bg-elevated text-text shadow-sm'
+                  : 'text-text-muted hover:text-text',
+              )}
+            >
+              <Icon className="w-4 h-4" />
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {activeTab === 'clusters' && <ClusterSettings />}
       {activeTab === 'kubernetes' && <KubernetesClusterSettings />}
       {activeTab === 'channels' && <ChannelSettings />}
-      {activeTab === 'llm' && <LLMSettings />}
+      {activeTab === 'ai' && <AISettings />}
       {activeTab === 'users' && <UserSettings />}
+    </div>
+  )
+}
+
+function AISettings() {
+  const [activeTab, setActiveTab] = useState<'providers' | 'assistants'>('providers')
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-text">AI</h2>
+        <p className="mt-1 text-sm text-text-muted">
+          Manage provider connections and the default instruction profiles used by assistant experiences.
+        </p>
+      </div>
+
+      <div className="overflow-x-auto pb-1 -mb-1">
+        <div className="inline-flex min-w-max gap-1 rounded-xl border border-border bg-bg-input p-1">
+          {[
+            { id: 'providers' as const, label: 'Providers', icon: Brain },
+            { id: 'assistants' as const, label: 'Assistants', icon: Bot },
+          ].map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActiveTab(id)}
+              className={cn(
+                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-colors',
+                activeTab === id
+                  ? 'bg-bg-elevated text-text shadow-sm'
+                  : 'text-text-muted hover:text-text',
+              )}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab === 'providers' ? <LLMSettings /> : <AssistantProfilesSettings />}
     </div>
   )
 }

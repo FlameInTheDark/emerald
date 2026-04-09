@@ -77,7 +77,20 @@ func main() {
 		workingDir = "."
 	}
 
-	skillStore := skills.NewStore(filepath.Join(workingDir, ".agents", "skills"), 2*time.Second)
+	executablePath, err := os.Executable()
+	if err != nil {
+		log.Printf("failed to resolve executable path: %v", err)
+		executablePath = ""
+	}
+
+	skillsDir, err := skills.ResolveDirectory(os.Getenv("AUTOMATOR_SKILLS_DIR"), workingDir, executablePath)
+	if err != nil {
+		log.Printf("failed to resolve skills directory: %v", err)
+		skillsDir = filepath.Join(workingDir, ".agents", "skills")
+	}
+	log.Printf("loading local skills from %s", skillsDir)
+
+	skillStore := skills.NewStore(skillsDir, 2*time.Second)
 	if err := skillStore.Start(context.Background()); err != nil {
 		log.Printf("failed to start skill store: %v", err)
 	}

@@ -10,13 +10,16 @@ import (
 	"github.com/FlameInTheDark/automator/internal/auth"
 )
 
+const authSessionLocalKey = "auth_session"
+
 func authMiddleware(service *auth.Service) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if c.Method() == http.MethodOptions || isPublicAPIPath(c.Path()) {
 			return c.Next()
 		}
 
-		if _, ok := service.Session(c.Cookies(service.CookieName())); ok {
+		if session, ok := service.Session(c.Cookies(service.CookieName())); ok {
+			c.Locals(authSessionLocalKey, session)
 			return c.Next()
 		}
 
@@ -27,7 +30,8 @@ func authMiddleware(service *auth.Service) fiber.Handler {
 
 func websocketAuthMiddleware(service *auth.Service) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if _, ok := service.Session(c.Cookies(service.CookieName())); ok {
+		if session, ok := service.Session(c.Cookies(service.CookieName())); ok {
+			c.Locals(authSessionLocalKey, session)
 			return c.Next()
 		}
 

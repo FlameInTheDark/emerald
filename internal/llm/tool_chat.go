@@ -8,6 +8,25 @@ import (
 
 const DefaultMaxToolChatRounds = 8
 
+type ToolChatEventType string
+
+const (
+	ToolChatEventContentDelta ToolChatEventType = "content_delta"
+	ToolChatEventToolStarted  ToolChatEventType = "tool_started"
+	ToolChatEventToolFinished ToolChatEventType = "tool_finished"
+	ToolChatEventUsage        ToolChatEventType = "usage"
+)
+
+type ToolChatEvent struct {
+	Type       ToolChatEventType `json:"type"`
+	Delta      string            `json:"delta,omitempty"`
+	ToolCall   *ToolCall         `json:"tool_call,omitempty"`
+	ToolResult *ToolResult       `json:"tool_result,omitempty"`
+	Usage      *Usage            `json:"usage,omitempty"`
+}
+
+type ToolChatEventHandler func(ToolChatEvent) error
+
 type ToolExecutor interface {
 	GetAllTools() []ToolDefinition
 	Execute(ctx context.Context, name string, arguments json.RawMessage) (any, error)
@@ -27,13 +46,14 @@ func RunToolChat(
 	messages []Message,
 	tools ToolExecutor,
 	maxRounds int,
-) (*ChatResponse, []ToolCall, []ToolResult, error) {
+) (*ChatResponse, []ToolCall, []ToolResult, []Message, error) {
 	if maxRounds <= 0 {
 		maxRounds = DefaultMaxToolChatRounds
 	}
 
 	allToolCalls := make([]ToolCall, 0)
 	allToolResults := make([]ToolResult, 0)
+	transcript := make([]Message, 0)
 	totalUsage := Usage{}
 
 	for round := 0; round < maxRounds; round++ {
@@ -43,7 +63,7 @@ func RunToolChat(
 			Tools:    tools.GetAllTools(),
 		})
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 
 		totalUsage.PromptTokens += resp.Usage.PromptTokens
@@ -53,15 +73,22 @@ func RunToolChat(
 		toolCalls := normalizeToolCalls(resp.ToolCalls)
 		if len(toolCalls) == 0 {
 			resp.Usage = totalUsage
-			return resp, allToolCalls, allToolResults, nil
+			finalMessage := Message{
+				Role:    "assistant",
+				Content: resp.Content,
+			}
+			transcript = append(transcript, finalMessage)
+			return resp, allToolCalls, allToolResults, transcript, nil
 		}
 
 		allToolCalls = append(allToolCalls, toolCalls...)
-		messages = append(messages, Message{
+		assistantMessage := Message{
 			Role:      "assistant",
 			Content:   resp.Content,
 			ToolCalls: toolCalls,
-		})
+		}
+		messages = append(messages, assistantMessage)
+		transcript = append(transcript, assistantMessage)
 
 		for _, tc := range toolCalls {
 			arguments := decodeJSONValue(tc.Function.Arguments)
@@ -81,16 +108,153 @@ func RunToolChat(
 			}
 
 			allToolResults = append(allToolResults, toolResult)
-			messages = append(messages, Message{
+			toolMessage := Message{
 				Role:       "tool",
 				Name:       tc.Function.Name,
 				ToolCallID: tc.ID,
 				Content:    marshalToolPayload(payload),
-			})
+			}
+			messages = append(messages, toolMessage)
+			transcript = append(transcript, toolMessage)
 		}
 	}
 
-	return nil, allToolCalls, allToolResults, fmt.Errorf("tool execution exceeded %d rounds", maxRounds)
+	return nil, allToolCalls, allToolResults, transcript, fmt.Errorf("tool execution exceeded %d rounds", maxRounds)
+}
+
+func RunToolChatStream(
+	ctx context.Context,
+	provider Provider,
+	model string,
+	messages []Message,
+	tools ToolExecutor,
+	maxRounds int,
+	handler ToolChatEventHandler,
+) (*ChatResponse, []ToolCall, []ToolResult, []Message, error) {
+	if maxRounds <= 0 {
+		maxRounds = DefaultMaxToolChatRounds
+	}
+
+	allToolCalls := make([]ToolCall, 0)
+	allToolResults := make([]ToolResult, 0)
+	transcript := make([]Message, 0)
+	totalUsage := Usage{}
+
+	for round := 0; round < maxRounds; round++ {
+		resp, err := ChatWithStream(ctx, provider, ChatRequest{
+			Model:    model,
+			Messages: messages,
+			Tools:    tools.GetAllTools(),
+		}, func(event StreamEvent) error {
+			if handler == nil {
+				return nil
+			}
+
+			switch event.Type {
+			case StreamEventContentDelta:
+				return handler(ToolChatEvent{
+					Type:  ToolChatEventContentDelta,
+					Delta: event.Delta,
+				})
+			case StreamEventUsage:
+				usage := event.Usage
+				return handler(ToolChatEvent{
+					Type:  ToolChatEventUsage,
+					Usage: &usage,
+				})
+			default:
+				return nil
+			}
+		})
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+
+		totalUsage.PromptTokens += resp.Usage.PromptTokens
+		totalUsage.CompletionTokens += resp.Usage.CompletionTokens
+		totalUsage.TotalTokens += resp.Usage.TotalTokens
+
+		toolCalls := normalizeToolCalls(resp.ToolCalls)
+		if len(toolCalls) == 0 {
+			resp.Usage = totalUsage
+			finalMessage := Message{
+				Role:    "assistant",
+				Content: resp.Content,
+			}
+			transcript = append(transcript, finalMessage)
+			if handler != nil {
+				usage := resp.Usage
+				if err := handler(ToolChatEvent{
+					Type:  ToolChatEventUsage,
+					Usage: &usage,
+				}); err != nil {
+					return nil, nil, nil, nil, err
+				}
+			}
+			return resp, allToolCalls, allToolResults, transcript, nil
+		}
+
+		allToolCalls = append(allToolCalls, toolCalls...)
+		assistantMessage := Message{
+			Role:      "assistant",
+			Content:   resp.Content,
+			ToolCalls: toolCalls,
+		}
+		messages = append(messages, assistantMessage)
+		transcript = append(transcript, assistantMessage)
+
+		for _, tc := range toolCalls {
+			arguments := decodeJSONValue(tc.Function.Arguments)
+			toolResult := ToolResult{
+				Tool:      tc.Function.Name,
+				Arguments: arguments,
+			}
+
+			if handler != nil {
+				toolCall := tc
+				if err := handler(ToolChatEvent{
+					Type:     ToolChatEventToolStarted,
+					ToolCall: &toolCall,
+				}); err != nil {
+					return nil, nil, nil, nil, err
+				}
+			}
+
+			result, err := tools.Execute(ctx, tc.Function.Name, json.RawMessage(tc.Function.Arguments))
+			payload := map[string]any{}
+			if err != nil {
+				toolResult.Error = err.Error()
+				payload["error"] = err.Error()
+			} else {
+				toolResult.Result = result
+				payload["result"] = result
+			}
+
+			allToolResults = append(allToolResults, toolResult)
+			toolMessage := Message{
+				Role:       "tool",
+				Name:       tc.Function.Name,
+				ToolCallID: tc.ID,
+				Content:    marshalToolPayload(payload),
+			}
+			messages = append(messages, toolMessage)
+			transcript = append(transcript, toolMessage)
+
+			if handler != nil {
+				toolCall := tc
+				resultCopy := toolResult
+				if err := handler(ToolChatEvent{
+					Type:       ToolChatEventToolFinished,
+					ToolCall:   &toolCall,
+					ToolResult: &resultCopy,
+				}); err != nil {
+					return nil, nil, nil, nil, err
+				}
+			}
+		}
+	}
+
+	return nil, allToolCalls, allToolResults, transcript, fmt.Errorf("tool execution exceeded %d rounds", maxRounds)
 }
 
 func normalizeToolCalls(toolCalls []ToolCall) []ToolCall {

@@ -173,8 +173,8 @@ export default function Pipelines() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {pipelines?.map((pipeline) => (
-            <Card key={pipeline.id} className="group hover:border-accent/50 transition-colors">
-              <CardContent className="p-5">
+            <Card key={pipeline.id} className="group h-full hover:border-accent/50 transition-colors">
+              <CardContent className="flex h-full flex-col p-5">
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <Link
                     to={`/pipelines/${pipeline.id}`}
@@ -214,10 +214,12 @@ export default function Pipelines() {
                     </Button>
                   </div>
                 </div>
-                {pipeline.description && (
-                  <p className="text-xs text-text-muted mb-4 line-clamp-2">{pipeline.description}</p>
-                )}
-                <div className="flex items-center justify-between">
+                <div className="min-h-[2.5rem]">
+                  {pipeline.description && (
+                    <p className="line-clamp-2 text-xs leading-5 text-text-muted">{pipeline.description}</p>
+                  )}
+                </div>
+                <div className="mt-4 flex items-end justify-between gap-3">
                   <Badge
                     variant={
                       pipeline.status === 'active'

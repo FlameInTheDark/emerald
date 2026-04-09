@@ -13,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	"github.com/FlameInTheDark/automator/internal/api/handlers"
+	"github.com/FlameInTheDark/automator/internal/assistants"
 	"github.com/FlameInTheDark/automator/internal/auth"
 	"github.com/FlameInTheDark/automator/internal/channels"
 	"github.com/FlameInTheDark/automator/internal/crypto"
@@ -84,10 +85,13 @@ func New(cfg Config) *fiber.App {
 	channelContactStore := query.NewChannelContactStore(cfg.DB.DB)
 	channelHandler := handlers.NewChannelHandler(channelStore, channelContactStore, cfg.ChannelService)
 	userStore := query.NewUserStore(cfg.DB.DB, encryptor)
+	appConfigStore := query.NewAppConfigStore(cfg.DB.DB)
+	assistantProfileStore := assistants.NewStore(appConfigStore)
 
 	pipelineStore := query.NewPipelineStore(cfg.DB.DB)
 	templateStore := query.NewTemplateStore(cfg.DB.DB)
 	llmProviderStore := query.NewLLMProviderStore(cfg.DB.DB, encryptor)
+	chatStore := query.NewChatStore(cfg.DB.DB)
 	executionStore := query.NewExecutionStore(cfg.DB.DB)
 	llmProviderHandler := handlers.NewLLMProviderHandler(llmProviderStore)
 	dashboardHandler := handlers.NewDashboardHandler(clusterStore, pipelineStore, executionStore, channelStore, cfg.Scheduler)
@@ -100,7 +104,9 @@ func New(cfg Config) *fiber.App {
 		pipelineStore,
 		cfg.ExecutionRunner,
 	)
-	llmChatHandler := handlers.NewLLMChatHandler(llmProviderStore, clusterStore, kubernetesClusterStore, pipelineStore, cfg.ExecutionRunner, cfg.Scheduler, cfg.SkillStore, cfg.ShellRunner)
+	llmChatHandler := handlers.NewLLMChatHandler(llmProviderStore, clusterStore, kubernetesClusterStore, pipelineStore, chatStore, cfg.ExecutionRunner, cfg.Scheduler, cfg.SkillStore, cfg.ShellRunner, assistantProfileStore)
+	editorAssistantHandler := handlers.NewEditorAssistantHandler(llmProviderStore, assistantProfileStore)
+	assistantProfileHandler := handlers.NewAssistantProfileHandler(assistantProfileStore)
 	executionHandler := handlers.NewExecutionHandler(executionStore, cfg.ExecutionRunner)
 
 	api := app.Group("/api/v1")
@@ -175,7 +181,19 @@ func New(cfg Config) *fiber.App {
 	users.Post("/change-password", userHandler.ChangePassword)
 	users.Delete("/:id", userHandler.Delete)
 
-	api.Post("/llm/chat", llmChatHandler.Chat)
+	llmRoutes := api.Group("/llm")
+	llmRoutes.Get("/conversations", llmChatHandler.ListConversations)
+	llmRoutes.Get("/conversations/:id", llmChatHandler.GetConversation)
+	llmRoutes.Put("/conversations/:id", llmChatHandler.UpdateConversation)
+	llmRoutes.Delete("/conversations/:id", llmChatHandler.DeleteConversation)
+	llmRoutes.Post("/chat/stream", llmChatHandler.ChatStream)
+	llmRoutes.Post("/chat", llmChatHandler.Chat)
+	llmRoutes.Post("/editor-assistant/stream", editorAssistantHandler.ChatStream)
+
+	assistantProfiles := api.Group("/assistant-profiles")
+	assistantProfiles.Get("/:scope", assistantProfileHandler.Get)
+	assistantProfiles.Put("/:scope", assistantProfileHandler.Update)
+	assistantProfiles.Post("/:scope/restore-defaults", assistantProfileHandler.RestoreDefaults)
 
 	executions := api.Group("/executions")
 	executions.Get("/pipelines/:id", executionHandler.ListByPipeline)

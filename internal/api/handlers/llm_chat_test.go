@@ -83,7 +83,7 @@ func TestRunToolChatContinuesAfterToolExecution(t *testing.T) {
 		},
 	}
 
-	resp, toolCalls, toolResults, err := runToolChat(context.Background(), provider, "test-model", []llm.Message{
+	resp, toolCalls, toolResults, transcript, err := runToolChat(context.Background(), provider, "test-model", []llm.Message{
 		{Role: "system", Content: "You are helpful."},
 		{Role: "user", Content: "List nodes"},
 	}, tools)
@@ -102,6 +102,9 @@ func TestRunToolChatContinuesAfterToolExecution(t *testing.T) {
 	}
 	if len(toolResults) != 1 {
 		t.Fatalf("expected 1 tool result, got %d", len(toolResults))
+	}
+	if len(transcript) != 3 {
+		t.Fatalf("expected replay transcript with 3 messages, got %d", len(transcript))
 	}
 	if toolResults[0].Tool != "list_nodes" {
 		t.Fatalf("unexpected tool result name: %s", toolResults[0].Tool)
@@ -148,7 +151,7 @@ func TestRunToolChatReturnsToolErrorsForFollowUp(t *testing.T) {
 		},
 	}
 
-	resp, _, toolResults, err := runToolChat(context.Background(), provider, "test-model", []llm.Message{
+	resp, _, toolResults, transcript, err := runToolChat(context.Background(), provider, "test-model", []llm.Message{
 		{Role: "system", Content: "You are helpful."},
 		{Role: "user", Content: "List nodes"},
 	}, tools)
@@ -161,6 +164,9 @@ func TestRunToolChatReturnsToolErrorsForFollowUp(t *testing.T) {
 	}
 	if len(toolResults) != 1 || toolResults[0].Error == "" {
 		t.Fatalf("expected surfaced tool error, got %+v", toolResults)
+	}
+	if len(transcript) != 3 {
+		t.Fatalf("expected replay transcript with 3 messages, got %d", len(transcript))
 	}
 	if provider.requests[1].Messages[3].ToolCallID == "" {
 		t.Fatal("expected synthesized tool call id for tool message")

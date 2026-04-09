@@ -34,9 +34,10 @@ const iconMap: Record<string, React.ElementType> = {
 
 interface NodePaletteProps {
   onDragStart: (event: React.DragEvent, nodeType: string, label: string, config: Record<string, unknown>) => void
+  className?: string
 }
 
-export default function NodePalette({ onDragStart }: NodePaletteProps) {
+export default function NodePalette({ onDragStart, className }: NodePaletteProps) {
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     trigger: true,
     action: true,
@@ -63,7 +64,7 @@ export default function NodePalette({ onDragStart }: NodePaletteProps) {
   }
 
   return (
-    <div className="flex w-72 max-w-[calc(100vw-2rem)] max-h-[calc(100vh-11rem)] min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated/95 shadow-2xl backdrop-blur">
+    <div className={cn('flex w-72 max-w-[calc(100vw-2rem)] min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-xl', className)}>
       <div className="border-b border-border px-4 py-3">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-dimmed" />

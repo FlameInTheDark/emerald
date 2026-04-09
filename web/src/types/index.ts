@@ -1,3 +1,5 @@
+import type { Edge, Node, Viewport } from '@xyflow/react'
+
 export interface Cluster {
   id: string
   name: string
@@ -261,10 +263,201 @@ export interface LLMUsage {
 }
 
 export interface LLMChatResponse {
+  conversation_id: string
+  conversation: LLMConversationSummary
   content: string
   tool_calls?: LLMToolCall[]
   tool_results?: LLMToolResult[]
   usage?: LLMUsage
+}
+
+export type AssistantProfileScope = 'pipeline_editor' | 'chat_window'
+
+export type AssistantModuleId =
+  | 'pipeline_graph_rules'
+  | 'node_catalog'
+  | 'templating_guide'
+  | 'logic_expression_guide'
+  | 'llm_tool_edge_rules'
+
+export interface AssistantProfile {
+  scope: AssistantProfileScope
+  system_instructions: string
+  enabled_modules: AssistantModuleId[]
+  created_at?: string
+  updated_at?: string
+}
+
+export type EditorAssistantMode = 'ask' | 'edit'
+
+export interface EditorAssistantMessage {
+  role: 'user' | 'assistant'
+  content: string
+  tool_calls?: LLMToolCall[]
+  tool_results?: LLMToolResult[]
+}
+
+export interface EditorAssistantSelection {
+  selected_node_id?: string
+  selected_node_ids?: string[]
+}
+
+export interface EditorAssistantPipelineSnapshot {
+  name?: string
+  description?: string
+  status?: Pipeline['status'] | string
+  nodes: Node[]
+  edges: Edge[]
+  viewport?: Viewport
+}
+
+export interface EditorAssistantRequest {
+  provider_id?: string
+  mode: EditorAssistantMode
+  message: string
+  messages: EditorAssistantMessage[]
+  pipeline: EditorAssistantPipelineSnapshot
+  selection: EditorAssistantSelection
+}
+
+export type LivePipelineOperationType =
+  | 'add_nodes'
+  | 'update_nodes'
+  | 'delete_nodes'
+  | 'add_edges'
+  | 'update_edges'
+  | 'delete_edges'
+  | 'set_viewport'
+
+export interface LivePipelineOperation {
+  type: LivePipelineOperationType
+  nodes?: Node[]
+  edges?: Edge[]
+  node_ids?: string[]
+  edge_ids?: string[]
+  viewport?: Viewport
+}
+
+export interface EditorAssistantResponse {
+  content: string
+  tool_calls?: LLMToolCall[]
+  tool_results?: LLMToolResult[]
+  usage?: LLMUsage
+  operations?: LivePipelineOperation[]
+}
+
+export interface LLMChatStreamAssistantDeltaEvent {
+  type: 'assistant_delta'
+  delta: string
+}
+
+export interface LLMChatStreamToolStartedEvent {
+  type: 'tool_started'
+  tool_call?: LLMToolCall
+}
+
+export interface LLMChatStreamToolFinishedEvent {
+  type: 'tool_finished'
+  tool_call?: LLMToolCall
+  tool_result?: LLMToolResult
+}
+
+export interface LLMChatStreamUsageEvent {
+  type: 'usage'
+  usage?: LLMUsage
+}
+
+export interface LLMChatStreamDoneEvent {
+  type: 'done'
+  response: LLMChatResponse
+}
+
+export interface LLMChatStreamErrorEvent {
+  type: 'error'
+  error: string
+  status?: number
+}
+
+export type LLMChatStreamEvent =
+  | LLMChatStreamAssistantDeltaEvent
+  | LLMChatStreamToolStartedEvent
+  | LLMChatStreamToolFinishedEvent
+  | LLMChatStreamUsageEvent
+  | LLMChatStreamDoneEvent
+  | LLMChatStreamErrorEvent
+
+export interface EditorAssistantStreamAssistantDeltaEvent {
+  type: 'assistant_delta'
+  delta: string
+}
+
+export interface EditorAssistantStreamToolStartedEvent {
+  type: 'tool_started'
+  tool_call?: LLMToolCall
+}
+
+export interface EditorAssistantStreamToolFinishedEvent {
+  type: 'tool_finished'
+  tool_call?: LLMToolCall
+  tool_result?: LLMToolResult
+}
+
+export interface EditorAssistantStreamUsageEvent {
+  type: 'usage'
+  usage?: LLMUsage
+}
+
+export interface EditorAssistantStreamDoneEvent {
+  type: 'done'
+  response: EditorAssistantResponse
+}
+
+export interface EditorAssistantStreamErrorEvent {
+  type: 'error'
+  error: string
+  status?: number
+}
+
+export type EditorAssistantStreamEvent =
+  | EditorAssistantStreamAssistantDeltaEvent
+  | EditorAssistantStreamToolStartedEvent
+  | EditorAssistantStreamToolFinishedEvent
+  | EditorAssistantStreamUsageEvent
+  | EditorAssistantStreamDoneEvent
+  | EditorAssistantStreamErrorEvent
+
+export interface LLMConversationMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  tool_calls?: LLMToolCall[]
+  tool_results?: LLMToolResult[]
+  usage?: LLMUsage
+  created_at: string
+}
+
+export interface LLMConversationSummary {
+  id: string
+  title: string
+  provider_id?: string
+  proxmox_enabled: boolean
+  proxmox_cluster_id?: string
+  kubernetes_enabled: boolean
+  kubernetes_cluster_id?: string
+  compaction_count: number
+  compacted_at?: string
+  context_window: number
+  context_token_count: number
+  last_prompt_tokens: number
+  last_completion_tokens: number
+  last_total_tokens: number
+  last_message_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface LLMConversation extends LLMConversationSummary {
+  messages: LLMConversationMessage[]
 }
 
 export interface TemplateSuggestion {

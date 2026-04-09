@@ -25,6 +25,7 @@ import NodePalette from '../components/flow/NodePalette'
 import NodeConfigPanel from '../components/flow/NodeConfigPanel'
 import ExecutionLog from '../components/flow/ExecutionLog'
 import NodeExecutionModal from '../components/flow/NodeExecutionModal'
+import EditorAssistantDock from '../components/flow/EditorAssistantDock'
 import AutomatorNode from '../components/flow/nodes/AutomatorNode'
 import AutomatorEdge from '../components/flow/edges/AutomatorEdge'
 import { NODE_CATEGORIES } from '../components/flow/nodeTypes'
@@ -39,7 +40,9 @@ import { Textarea } from '../components/ui/Form'
 import Modal from '../components/ui/Modal'
 import { buildPipelineDocument, extractSingleDefinitionDocument } from '../lib/documents'
 import { downloadJSON, sanitizeFilename } from '../lib/download'
-import type { FlowDefinitionDocument, NodeExecutionLogData, Pipeline, PipelineRunResponse, NodeType, TemplateSummary } from '../types'
+import { applyLivePipelineOperations } from '../lib/editorAssistant'
+import { cn } from '../lib/utils'
+import type { FlowDefinitionDocument, LLMProvider, LivePipelineOperation, NodeExecutionLogData, Pipeline, PipelineRunResponse, NodeType, TemplateSummary } from '../types'
 
 const nodeTypes = {
   automator: AutomatorNode,
@@ -440,6 +443,7 @@ function PipelineEditor() {
   const {
     screenToFlowPosition,
     getViewport,
+    setViewport: setCanvasViewport,
     zoomIn,
     zoomOut,
     fitView: fitCanvasView,
@@ -464,6 +468,7 @@ function PipelineEditor() {
   const [contextMenu, setContextMenu] = useState<EditorContextMenuState | null>(null)
   const [templateMenuPosition, setTemplateMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [isBlockingOverlayOpen, setIsBlockingOverlayOpen] = useState(false)
+  const [assistantEditLockActive, setAssistantEditLockActive] = useState(false)
   const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false)
   const [showTemplateLibraryModal, setShowTemplateLibraryModal] = useState(false)
   const [templateDraftName, setTemplateDraftName] = useState('')
@@ -472,7 +477,7 @@ function PipelineEditor() {
   const nameInputRef = useRef<HTMLInputElement>(null)
   const selectedNodes = nodes.filter((node) => node.selected)
   const selectedNodeIds = selectedNodes.map((node) => node.id)
-  const isCanvasInteractionBlocked = isBlockingOverlayOpen || showSaveTemplateModal || showTemplateLibraryModal || templateMenuPosition !== null
+  const isCanvasInteractionBlocked = isBlockingOverlayOpen || showSaveTemplateModal || showTemplateLibraryModal || templateMenuPosition !== null || assistantEditLockActive
   const isCanvasInteractionDisabled = isCanvasInteractionBlocked || !isFlowInteractive
 
   const { data: pipeline, isLoading } = useQuery<Pipeline>({
@@ -484,6 +489,11 @@ function PipelineEditor() {
   const { data: templates = [], isLoading: areTemplatesLoading } = useQuery<TemplateSummary[]>({
     queryKey: ['templates'],
     queryFn: () => api.templates.list(),
+  })
+
+  const { data: llmProviders = [] } = useQuery<LLMProvider[]>({
+    queryKey: ['llm-providers'],
+    queryFn: () => api.llmProviders.list(),
   })
 
   const buildCurrentDefinition = useCallback((): FlowDefinitionDocument => (
@@ -665,6 +675,27 @@ function PipelineEditor() {
       })
     }
   }, [addToast, nodes, screenToFlowPosition, setEdges, setNodes, setSelectedNodeId])
+
+  const handleApplyAssistantOperations = useCallback(async (operations: LivePipelineOperation[]) => {
+    if (operations.length === 0) {
+      return
+    }
+
+    const nextState = applyLivePipelineOperations({
+      nodes,
+      edges,
+      viewport: getViewport(),
+      operations,
+    })
+
+    setNodes(nextState.nodes)
+    setEdges(nextState.edges)
+    void setCanvasViewport(nextState.viewport)
+
+    if (selectedNodeId && !nextState.nodes.some((node) => node.id === selectedNodeId)) {
+      setSelectedNodeId(null)
+    }
+  }, [edges, getViewport, nodes, selectedNodeId, setCanvasViewport, setEdges, setNodes, setSelectedNodeId])
 
   const saveTemplateMutation = useMutation({
     mutationFn: (payload: { name: string; description?: string }) => api.templates.create({
@@ -1773,7 +1804,7 @@ function PipelineEditor() {
 
   return (
     <div className="flex h-screen bg-bg">
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col">
         <input
           ref={addJSONTemplateInputRef}
           type="file"
@@ -1782,140 +1813,14 @@ function PipelineEditor() {
           onChange={handleAddJSONTemplate}
         />
 
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 bg-bg-elevated border-b border-border">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => navigate('/pipelines')}>
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-            <div className="min-w-0">
-              {editingDetails ? (
-                <div className="min-w-[320px] max-w-[520px] space-y-2">
-                  <Input
-                    ref={nameInputRef}
-                    value={pipelineName}
-                    onChange={(e) => setPipelineName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') {
-                        handleCancelDetailsEdit()
-                      }
-                    }}
-                    placeholder="Pipeline name"
-                    className="text-base font-semibold"
-                  />
-                  <Textarea
-                    value={pipelineDescription}
-                    onChange={(e) => setPipelineDescription(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') {
-                        handleCancelDetailsEdit()
-                      }
-                    }}
-                    placeholder="Add a short description"
-                    rows={2}
-                    className="text-sm"
-                  />
-                  <div className="flex items-center gap-2">
-                    <Button variant="secondary" size="sm" onClick={() => setEditingDetails(false)}>
-                      Done
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={handleCancelDetailsEdit}>
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h1
-                      className="truncate text-lg font-semibold text-text cursor-pointer hover:text-accent transition-colors px-2 py-0.5 rounded hover:bg-bg-overlay"
-                      onClick={() => setEditingDetails(true)}
-                      title="Click to edit details"
-                    >
-                      {pipelineName || 'Untitled'}
-                    </h1>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditingDetails(true)}
-                      title="Edit pipeline details"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                  <p
-                    className="truncate px-2 text-xs text-text-muted cursor-pointer hover:text-text transition-colors"
-                    onClick={() => setEditingDetails(true)}
-                    title="Click to edit description"
-                  >
-                    {pipelineDescription.trim() || 'Add a pipeline description'}
-                  </p>
-                </div>
-              )}
-            </div>
-            <Badge variant={pipelineStatus === 'active' ? 'success' : pipelineStatus === 'draft' ? 'warning' : 'default'}>
-              {pipelineStatus}
-            </Badge>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={isSaving}
-              onClick={() => handleToggleStatus(pipelineStatus === 'active' ? 'draft' : 'active')}
-            >
-              <Power className="w-4 h-4" />
-              {pipelineStatus === 'active' ? 'Deactivate' : 'Activate'}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setTemplateMenuPosition(null)
-                if (showExecutionLog) {
-                  handleCloseExecutionLog()
-                  return
-                }
-                setShowExecutionLog(true)
-              }}
-              className={showExecutionLog ? 'text-accent border-accent/50' : ''}
-            >
-              <ListChecks className="w-4 h-4" />
-              Log
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleTemplateMenuToggle}
-              className={templateMenuPosition ? 'text-accent border-accent/50' : ''}
-            >
-              <Workflow className="w-4 h-4" />
-              Template
-              {templateMenuPosition ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={isSaving}
-              onClick={handleSave}
-            >
-              <Save className="w-4 h-4" />
-              Save
-            </Button>
-            <Button
-              size="sm"
-              loading={isRunning}
-              onClick={handleRun}
-            >
-              <Play className="w-4 h-4" />
-              Run
-            </Button>
-          </div>
-        </div>
-
         {/* Canvas */}
-        <div ref={reactFlowWrapper} className="flex-1 min-h-0">
+        <div
+          ref={reactFlowWrapper}
+          className={cn(
+            'relative flex-1 min-h-0',
+            assistantEditLockActive && '[&_.react-flow__background]:opacity-45 [&_.react-flow__viewport]:opacity-70 [&_.react-flow__viewport]:saturate-50',
+          )}
+        >
           <ReactFlow
             nodes={renderedNodes}
             edges={renderedEdges}
@@ -1968,19 +1873,193 @@ function PipelineEditor() {
           >
             <Background color="#1e2d3d" gap={20} size={1} />
 
-            <Panel position="top-left" className="!m-4 flex max-w-[calc(100vw-2rem)] flex-col gap-3">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setIsNodePaletteOpen((current) => !current)}
-                className="w-fit shadow-lg"
-              >
-                <List className="w-4 h-4" />
-                Nodes
-                {isNodePaletteOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </Button>
+            <Panel
+              position="top-left"
+              className={cn(
+                '!m-4 flex max-w-[min(32rem,calc(100vw-2rem))] pointer-events-none flex-col gap-1',
+                isNodePaletteOpen && 'h-[calc(100vh-6.5rem)] max-h-[calc(100vh-6.5rem)]',
+              )}
+            >
+              <FloatingEditorPanel className="w-full max-w-[min(32rem,calc(100vw-2rem))] overflow-hidden">
+                <div className="space-y-3 px-4 py-3">
+                  {editingDetails ? (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => navigate('/pipelines')}
+                          className="rounded-lg"
+                        >
+                          <ArrowLeft className="w-4 h-4" />
+                        </Button>
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-text-dimmed">
+                          Pipeline
+                        </span>
+                        <Badge variant={pipelineStatus === 'active' ? 'success' : pipelineStatus === 'draft' ? 'warning' : 'default'}>
+                          {pipelineStatus}
+                        </Badge>
+                      </div>
+                      <Input
+                        ref={nameInputRef}
+                        value={pipelineName}
+                        onChange={(e) => setPipelineName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            handleCancelDetailsEdit()
+                          }
+                        }}
+                        placeholder="Pipeline name"
+                        className="rounded-lg bg-bg-input text-base font-semibold"
+                      />
+                      <Textarea
+                        value={pipelineDescription}
+                        onChange={(e) => setPipelineDescription(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            handleCancelDetailsEdit()
+                          }
+                        }}
+                        placeholder="Add a short description"
+                        rows={3}
+                        className="min-h-[92px] rounded-lg bg-bg-input text-sm resize-none"
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button variant="secondary" size="sm" onClick={() => setEditingDetails(false)} className="rounded-xl">
+                          Done
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={handleCancelDetailsEdit} className="rounded-xl">
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-3">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => navigate('/pipelines')}
+                        className="mt-0.5 rounded-lg"
+                      >
+                        <ArrowLeft className="w-4 h-4" />
+                      </Button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingDetails(true)}
+                        className="block min-w-0 flex-1 rounded-lg border border-transparent bg-transparent p-0 text-left transition-colors hover:border-border hover:bg-bg-input/40"
+                        title="Edit pipeline details"
+                      >
+                        <div className="flex items-start justify-between gap-3 px-2 py-1.5">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h1 className="truncate text-lg font-semibold text-text">
+                                {pipelineName || 'Untitled'}
+                              </h1>
+                              <Badge variant={pipelineStatus === 'active' ? 'success' : pipelineStatus === 'draft' ? 'warning' : 'default'}>
+                                {pipelineStatus}
+                              </Badge>
+                            </div>
+                            <p className="mt-1 line-clamp-1 text-xs text-text-muted">
+                              {pipelineDescription.trim() || 'Add a pipeline description'}
+                            </p>
+                          </div>
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-bg-input text-text-dimmed">
+                            <Edit2 className="w-4 h-4" />
+                          </span>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </FloatingEditorPanel>
 
-              {isNodePaletteOpen && <NodePalette onDragStart={onDragStart} />}
+              <div className="pointer-events-auto flex min-h-0 flex-1 flex-col gap-1">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setIsNodePaletteOpen((current) => !current)}
+                  className="w-fit rounded-xl shadow-lg"
+                >
+                  <List className="w-4 h-4" />
+                  Nodes
+                  {isNodePaletteOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </Button>
+
+                {isNodePaletteOpen && (
+                  <NodePalette
+                    onDragStart={onDragStart}
+                    className="min-h-0 flex-1 max-h-full"
+                  />
+                )}
+              </div>
+            </Panel>
+
+            <Panel position="top-right" className="!m-4 flex max-w-[min(42rem,calc(100vw-2rem))] justify-end pointer-events-none">
+              <FloatingEditorPanel className="max-w-full px-2 py-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={isSaving}
+                    onClick={() => handleToggleStatus(pipelineStatus === 'active' ? 'draft' : 'active')}
+                    className="rounded-xl"
+                  >
+                    <Power className="w-4 h-4" />
+                    {pipelineStatus === 'active' ? 'Deactivate' : 'Activate'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setTemplateMenuPosition(null)
+                      if (showExecutionLog) {
+                        handleCloseExecutionLog()
+                        return
+                      }
+                      setShowExecutionLog(true)
+                    }}
+                    className={cn(
+                      'rounded-xl',
+                      showExecutionLog && 'border-accent/50 bg-accent/10 text-accent',
+                    )}
+                  >
+                    <ListChecks className="w-4 h-4" />
+                    Log
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleTemplateMenuToggle}
+                    className={cn(
+                      'rounded-xl',
+                      templateMenuPosition && 'border-accent/50 bg-accent/10 text-accent',
+                    )}
+                  >
+                    <Workflow className="w-4 h-4" />
+                    Template
+                    {templateMenuPosition ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={isSaving}
+                    onClick={handleSave}
+                    className="rounded-xl"
+                  >
+                    <Save className="w-4 h-4" />
+                    Save
+                  </Button>
+                  <Button
+                    size="sm"
+                    loading={isRunning}
+                    onClick={handleRun}
+                    className="rounded-xl"
+                  >
+                    <Play className="w-4 h-4" />
+                    Run
+                  </Button>
+                </div>
+              </FloatingEditorPanel>
             </Panel>
 
             <Panel position="bottom-left" className="!m-4">
@@ -2035,7 +2114,7 @@ function PipelineEditor() {
             </Panel>
 
             {selectedNode && !showExecutionLog && (
-              <Panel position="top-right" className="!m-4 flex max-w-[calc(100vw-2rem)]">
+              <Panel position="top-right" className="!m-4 !mt-28 flex max-w-[calc(100vw-2rem)] sm:!mt-20">
                 <NodeConfigPanel
                   pipelineId={id!}
                   nodes={nodes}
@@ -2049,6 +2128,17 @@ function PipelineEditor() {
                   onRemoveSourceHandles={removeSelectedNodeSourceHandles}
                   onOverlayOpenChange={setIsBlockingOverlayOpen}
                   onClose={() => setSelectedNodeId(null)}
+                />
+              </Panel>
+            )}
+
+            {showExecutionLog && (
+              <Panel position="top-right" className="!m-4 !mt-28 flex max-w-[calc(100vw-2rem)] sm:!mt-20">
+                <ExecutionLog
+                  pipelineId={id!}
+                  isOpen={showExecutionLog}
+                  onClose={handleCloseExecutionLog}
+                  onExecutionSelect={handleExecutionHighlight}
                 />
               </Panel>
             )}
@@ -2067,19 +2157,40 @@ function PipelineEditor() {
                 </div>
               </Panel>
             )}
+
+            <EditorAssistantDock
+              pipelineKey={id ?? 'new'}
+              pipeline={{
+                name: pipelineName,
+                description: pipelineDescription,
+                status: pipelineStatus,
+                nodes,
+                edges,
+                viewport: getViewport(),
+              }}
+              selection={{
+                selected_node_id: selectedNodeId ?? undefined,
+                selected_node_ids: selectedNodeIds,
+              }}
+              providers={llmProviders}
+              onApplyOperations={handleApplyAssistantOperations}
+              onEditLockChange={setAssistantEditLockActive}
+            />
           </ReactFlow>
+
+          {assistantEditLockActive && (
+            <div className="pointer-events-none absolute left-4 top-4 z-20">
+              <div className="rounded-full border border-border bg-bg-elevated/95 px-3 py-2 shadow-lg backdrop-blur">
+                <div className="flex items-center gap-2 text-xs">
+                  <Brain className="h-3.5 w-3.5 animate-pulse text-accent" />
+                  <span className="font-medium text-text">Applying live edits</span>
+                  <span className="text-text-dimmed">Canvas locked</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Right: Execution Log */}
-      {showExecutionLog && (
-        <ExecutionLog
-          pipelineId={id!}
-          isOpen={showExecutionLog}
-          onClose={handleCloseExecutionLog}
-          onExecutionSelect={handleExecutionHighlight}
-        />
-      )}
 
       {activeNodeLog && activeNodeLogNode && (
         <NodeExecutionModal
@@ -2243,3 +2354,22 @@ function PipelineEditorWithProvider() {
 }
 
 export default PipelineEditorWithProvider
+
+function FloatingEditorPanel({
+  className,
+  children,
+}: {
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      className={cn(
+        'pointer-events-auto rounded-xl border border-border bg-bg-elevated shadow-xl',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  )
+}

@@ -158,3 +158,38 @@ type DashboardStats struct {
 	Executions24h   int `json:"executions_24h"`
 	Channels        int `json:"channels"`
 }
+
+type ChatConversation struct {
+	ID                    string     `json:"id"`
+	UserID                string     `json:"user_id"`
+	Title                 string     `json:"title"`
+	ProviderID            *string    `json:"provider_id,omitempty"`
+	ProxmoxEnabled        bool       `json:"proxmox_enabled"`
+	ProxmoxClusterID      *string    `json:"proxmox_cluster_id,omitempty"`
+	KubernetesEnabled     bool       `json:"kubernetes_enabled"`
+	KubernetesClusterID   *string    `json:"kubernetes_cluster_id,omitempty"`
+	ContextSummary        *string    `json:"-"`
+	CompactedMessageCount int        `json:"compacted_message_count"`
+	CompactionCount       int        `json:"compaction_count"`
+	CompactedAt           *time.Time `json:"compacted_at,omitempty"`
+	ContextWindow         int        `json:"context_window"`
+	ContextTokenCount     int        `json:"context_token_count"`
+	LastPromptTokens      int        `json:"last_prompt_tokens"`
+	LastCompletionTokens  int        `json:"last_completion_tokens"`
+	LastTotalTokens       int        `json:"last_total_tokens"`
+	LastMessageAt         time.Time  `json:"last_message_at"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
+}
+
+type ChatMessage struct {
+	ID              string    `json:"id"`
+	ConversationID  string    `json:"conversation_id"`
+	Role            string    `json:"role"`
+	Content         string    `json:"content"`
+	ToolCalls       *string   `json:"tool_calls,omitempty"`
+	ToolResults     *string   `json:"tool_results,omitempty"`
+	Usage           *string   `json:"usage,omitempty"`
+	ContextMessages *string   `json:"-"`
+	CreatedAt       time.Time `json:"created_at"`
+}

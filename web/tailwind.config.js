@@ -45,10 +45,20 @@ export default {
           '0%': { opacity: '0' },
           '100%': { opacity: '1' },
         },
+        'dock-in': {
+          '0%': { opacity: '0', transform: 'translateY(18px) scale(0.97)' },
+          '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
+        'picker-in': {
+          '0%': { opacity: '0', transform: 'translateY(10px) scale(0.98)' },
+          '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
       },
       animation: {
         'slide-in': 'slide-in 0.2s ease-out',
         'fade-in': 'fade-in 0.15s ease-out',
+        'dock-in': 'dock-in 0.2s cubic-bezier(0.22, 1, 0.36, 1)',
+        'picker-in': 'picker-in 0.16s cubic-bezier(0.22, 1, 0.36, 1)',
       },
     },
   },

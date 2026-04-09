@@ -57,7 +57,7 @@ export default function Dashboard() {
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-text">Dashboard</h1>
-        <p className="text-text-muted mt-1">Overview of your Proxmox automation setup</p>
+        <p className="text-text-muted mt-1">Overview of your automation workspace</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -175,7 +175,7 @@ export default function Dashboard() {
           <CardContent className="p-12 text-center">
             <Server className="w-12 h-12 text-text-dimmed mx-auto mb-4" />
             <h3 className="text-lg font-medium text-text mb-2">No clusters connected</h3>
-            <p className="text-text-muted">Add your first Proxmox cluster in Settings to get started</p>
+            <p className="text-text-muted">Add your first cluster connection in Settings to get started</p>
           </CardContent>
         </Card>
       )}

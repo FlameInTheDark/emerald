@@ -2,10 +2,12 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/FlameInTheDark/automator/internal/db/models"
+	"github.com/FlameInTheDark/automator/internal/skills"
 )
 
 type stubClusterStore struct {
@@ -30,6 +32,10 @@ type stubKubernetesClusterStore struct {
 	clusters []models.KubernetesCluster
 }
 
+type stubSkillReader struct {
+	skill skills.Skill
+}
+
 func (s stubKubernetesClusterStore) List(context.Context) ([]models.KubernetesCluster, error) {
 	return s.clusters, nil
 }
@@ -42,6 +48,25 @@ func (s stubKubernetesClusterStore) GetByID(_ context.Context, id string) (*mode
 		}
 	}
 	return nil, context.Canceled
+}
+
+func (s stubSkillReader) List() []skills.Summary {
+	return []skills.Summary{{
+		Name:        s.skill.Name,
+		Description: s.skill.Description,
+		Path:        s.skill.Path,
+	}}
+}
+
+func (s stubSkillReader) SummaryText() string {
+	return "- " + s.skill.Name + ": " + s.skill.Description
+}
+
+func (s stubSkillReader) GetByName(name string) (skills.Skill, bool) {
+	if strings.EqualFold(strings.TrimSpace(name), s.skill.Name) {
+		return s.skill, true
+	}
+	return skills.Skill{}, false
 }
 
 func TestToolRegistryResolveClusterUsesOnlyConfiguredCluster(t *testing.T) {
@@ -168,4 +193,50 @@ func TestToolRegistryResolveKubernetesClusterRequiresSelectionWhenMultipleExist(
 	if !strings.Contains(err.Error(), "multiple Kubernetes clusters are configured") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestToolRegistryRegistersSkillToolWhenSkillStoreIsConfigured(t *testing.T) {
+	t.Parallel()
+
+	registry := NewToolRegistryWithOptions(ToolRegistryOptions{
+		SkillStore: stubSkillReader{
+			skill: skills.Skill{
+				Name:        "pipeline-builder",
+				Description: "Build valid pipeline definitions.",
+				Path:        "/workspace/.agents/skills/pipeline-builder/SKILL.md",
+				Content:     "# Pipeline Builder",
+			},
+		},
+	})
+
+	toolNames := make([]string, 0, len(registry.GetAllTools()))
+	for _, tool := range registry.GetAllTools() {
+		toolNames = append(toolNames, tool.Function.Name)
+	}
+
+	if !containsString(toolNames, "get_skill") {
+		t.Fatalf("expected get_skill tool to be registered, got %v", toolNames)
+	}
+
+	result, err := registry.Execute(context.Background(), "get_skill", json.RawMessage(`{"name":"pipeline-builder"}`))
+	if err != nil {
+		t.Fatalf("Execute get_skill returned error: %v", err)
+	}
+
+	payload, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected result type %T", result)
+	}
+	if payload["name"] != "pipeline-builder" {
+		t.Fatalf("skill name = %v, want pipeline-builder", payload["name"])
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

@@ -1,13 +1,20 @@
 import type {
   ActiveExecution,
+  AssistantProfile,
   AuthSession,
   Channel,
   ChannelContact,
   Cluster,
   DashboardStats,
+  EditorAssistantRequest,
+  EditorAssistantResponse,
+  EditorAssistantStreamEvent,
   Execution,
   ExecutionDetail,
   LLMChatResponse,
+  LLMChatStreamEvent,
+  LLMConversation,
+  LLMConversationSummary,
   LLMModelInfo,
   LLMProvider,
   KubernetesCluster,
@@ -54,6 +61,92 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 
   if (res.status === 204) return undefined as unknown as T
   return res.json() as Promise<T>
+}
+
+async function streamRequest<TEvent extends { type: string }>(
+  endpoint: string,
+  options: RequestInit | undefined,
+  onEvent: (event: TEvent) => void,
+): Promise<void> {
+  const headers = new Headers(options?.headers)
+  if (options?.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+  headers.set('Accept', 'text/event-stream')
+
+  const res = await fetch(`${API_BASE}${endpoint}`, {
+    ...options,
+    credentials: 'include',
+    headers,
+  })
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: res.statusText }))
+    throw new APIError(error.error || `Request failed: ${res.status}`, res.status)
+  }
+
+  if (!res.body) {
+    throw new APIError('Streaming is not available in this environment.', res.status)
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) {
+        break
+      }
+
+      buffer += decoder.decode(value, { stream: true })
+      buffer = dispatchSSEChunks(buffer, onEvent)
+    }
+
+    buffer += decoder.decode()
+    dispatchSSEChunks(buffer, onEvent)
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function dispatchSSEChunks<TEvent extends { type: string }>(
+  buffer: string,
+  onEvent: (event: TEvent) => void,
+): string {
+  let nextBuffer = buffer
+  while (true) {
+    const match = nextBuffer.match(/\r?\n\r?\n/)
+    if (!match || match.index === undefined) {
+      break
+    }
+
+    const separatorIndex = match.index
+    const separatorLength = match[0].length
+    const rawEvent = nextBuffer.slice(0, separatorIndex)
+    nextBuffer = nextBuffer.slice(separatorIndex + separatorLength)
+
+    const parsed = parseSSEEvent<TEvent>(rawEvent)
+    if (parsed) {
+      onEvent(parsed)
+    }
+  }
+
+  return nextBuffer
+}
+
+function parseSSEEvent<TEvent extends { type: string }>(rawEvent: string): TEvent | null {
+  const dataLines = rawEvent
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trim())
+
+  if (dataLines.length === 0) {
+    return null
+  }
+
+  return JSON.parse(dataLines.join('\n')) as TEvent
 }
 
 export const api = {
@@ -131,5 +224,82 @@ export const api = {
   },
   llm: {
     chat: (data: unknown) => request<LLMChatResponse>('/llm/chat', { method: 'POST', body: JSON.stringify(data) }),
+    chatStream: async (
+      data: unknown,
+      handlers?: {
+        onEvent?: (event: Exclude<LLMChatStreamEvent, { type: 'done' }>) => void
+        signal?: AbortSignal
+      },
+    ) => {
+      let finalResponse: LLMChatResponse | null = null
+
+      await streamRequest<LLMChatStreamEvent>('/llm/chat/stream', {
+        method: 'POST',
+        body: JSON.stringify(data),
+        signal: handlers?.signal,
+      }, (event) => {
+        if (event.type === 'done') {
+          finalResponse = event.response
+          return
+        }
+
+        if (event.type === 'error') {
+          throw new APIError(event.error || 'Streaming request failed', event.status ?? 500)
+        }
+
+        handlers?.onEvent?.(event)
+      })
+
+      if (!finalResponse) {
+        throw new APIError('Stream ended before the response completed.', 500)
+      }
+
+      return finalResponse
+    },
+    editorAssistantStream: async (
+      data: EditorAssistantRequest,
+      handlers?: {
+        onEvent?: (event: Exclude<EditorAssistantStreamEvent, { type: 'done' }>) => void
+        signal?: AbortSignal
+      },
+    ) => {
+      let finalResponse: EditorAssistantResponse | null = null
+
+      await streamRequest<EditorAssistantStreamEvent>('/llm/editor-assistant/stream', {
+        method: 'POST',
+        body: JSON.stringify(data),
+        signal: handlers?.signal,
+      }, (event) => {
+        if (event.type === 'done') {
+          finalResponse = event.response
+          return
+        }
+
+        if (event.type === 'error') {
+          throw new APIError(event.error || 'Streaming request failed', event.status ?? 500)
+        }
+
+        handlers?.onEvent?.(event)
+      })
+
+      if (!finalResponse) {
+        throw new APIError('Stream ended before the response completed.', 500)
+      }
+
+      return finalResponse
+    },
+    conversations: {
+      list: () => request<LLMConversationSummary[]>('/llm/conversations'),
+      get: (id: string) => request<LLMConversation>(`/llm/conversations/${id}`),
+      update: (id: string, data: unknown) => request<LLMConversationSummary>(`/llm/conversations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      delete: (id: string) => request<void>(`/llm/conversations/${id}`, { method: 'DELETE' }),
+    },
+  },
+  assistantProfiles: {
+    get: (scope: 'pipeline_editor' | 'chat_window') => request<AssistantProfile>(`/assistant-profiles/${scope}`),
+    update: (scope: 'pipeline_editor' | 'chat_window', data: Pick<AssistantProfile, 'system_instructions' | 'enabled_modules'>) =>
+      request<AssistantProfile>(`/assistant-profiles/${scope}`, { method: 'PUT', body: JSON.stringify(data) }),
+    restoreDefaults: (scope: 'pipeline_editor' | 'chat_window') =>
+      request<AssistantProfile>(`/assistant-profiles/${scope}/restore-defaults`, { method: 'POST' }),
   },
 }

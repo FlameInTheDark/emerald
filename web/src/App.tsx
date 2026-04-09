@@ -36,6 +36,7 @@ export default function App() {
               <Route path="/templates" element={<Templates />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/chat" element={<LLMChat />} />
+              <Route path="/chat/:conversationId" element={<LLMChat />} />
             </Route>
           </Route>
         </Routes>
