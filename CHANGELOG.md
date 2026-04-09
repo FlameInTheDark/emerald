@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/FlameInTheDark/emerald/compare/v1.4.0...v1.5.0) (2026-04-09)
+
+
+### Features
+
+* UI improvement and rebranding ([9a3c328](https://github.com/FlameInTheDark/emerald/commit/9a3c3280be04eb99d827ef27014eba39efab11f2))
+
 # [1.4.0](https://github.com/FlameInTheDark/automator/compare/v1.3.0...v1.4.0) (2026-04-09)
 
 
