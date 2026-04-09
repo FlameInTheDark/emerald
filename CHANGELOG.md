@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/FlameInTheDark/automator/compare/v1.3.0...v1.4.0) (2026-04-09)
+
+
+### Features
+
+* improved editor assistant and skills ([9fb57de](https://github.com/FlameInTheDark/automator/commit/9fb57de6580acedee90c969647e6fea1d10587cf))
+
 # [1.3.0](https://github.com/FlameInTheDark/automator/compare/v1.2.0...v1.3.0) (2026-04-09)
 
 
