@@ -17,12 +17,15 @@ RM_EMBED = rm -rf "$(EMBED_DIR)"
 WRITE_WEB_DEPS = touch node_modules/.install-stamp
 endif
 
-.PHONY: build build-web run clean test lint docker docker-run
+.PHONY: build build-web build-images run clean test lint docker docker-run
 
 $(WEB_DEPS): $(WEB_DIR)/package.json $(WEB_DIR)/package-lock.json
 	cd $(WEB_DIR) && npm ci && $(WRITE_WEB_DEPS)
 
-build-web: $(WEB_DEPS)
+build-images: $(WEB_DEPS)
+	cd $(WEB_DIR) && npm run render:editor-illustrations
+
+build-web: build-images
 	cd $(WEB_DIR) && npm run build
 
 build: build-web

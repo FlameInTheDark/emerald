@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/node-editor-gem-network-transparent.svg" alt="Emerald visual automation overview" width="960" />
+</p>
+
 # Emerald
 
 Emerald is a single-binary automation platform for building visual pipelines around infrastructure, messaging, local tooling, and AI workflows. It combines a Go backend, an embedded React UI, SQLite storage, and a node-based execution engine so you can build, run, observe, and iteratively refine automations from one place.

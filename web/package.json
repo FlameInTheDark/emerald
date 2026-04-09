@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "render:editor-illustrations": "npm run render:editor-illustrations:svg && npm run render:editor-illustrations:png",
+    "render:editor-illustrations:svg": "tsx remotion/render-editor-gem-illustrations.tsx",
+    "render:editor-illustrations:png": "tsx remotion/render-editor-gem-png.ts",
     "test": "vitest run"
   },
   "dependencies": {
@@ -25,6 +28,8 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@remotion/bundler": "^4.0.447",
+    "@remotion/renderer": "^4.0.447",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -34,7 +39,9 @@
     "autoprefixer": "^10.4.17",
     "jsdom": "^29.0.2",
     "postcss": "^8.4.35",
+    "remotion": "^4.0.447",
     "tailwindcss": "^3.4.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.3",
     "vite": "^5.1.0",
     "vitest": "^4.1.3"
