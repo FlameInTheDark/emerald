@@ -25,7 +25,7 @@ $(WEB_DEPS): $(WEB_DIR)/package.json $(WEB_DIR)/package-lock.json
 build-images: $(WEB_DEPS)
 	cd $(WEB_DIR) && npm run render:editor-illustrations
 
-build-web: build-images
+build-web:
 	cd $(WEB_DIR) && npm run build
 
 build: build-web

@@ -158,6 +158,7 @@ const MIN_GROUP_WIDTH = 280
 const MIN_GROUP_HEIGHT = 180
 const DEFAULT_NODE_WIDTH = 220
 const DEFAULT_NODE_HEIGHT = 120
+const DUPLICATE_SELECTION_OFFSET = { x: 40, y: 40 }
 
 type NodeBounds = {
   x: number
@@ -389,6 +390,281 @@ function buildGeneratedNodeId(node: Node) {
   return `${prefix}-${crypto.randomUUID()}`
 }
 
+type SelectionDuplicationIssue = {
+  title: string
+  message: string
+}
+
+type FlowPoint = {
+  x: number
+  y: number
+}
+
+type InsertedSelection = {
+  nodes: Node[]
+  edges: Edge[]
+  selectedNodeIds: string[]
+}
+
+type CopiedSelectionNodeSnapshot = {
+  node: Node
+  absolutePosition: FlowPoint
+}
+
+type CopiedSelectionSnapshot = {
+  nodes: CopiedSelectionNodeSnapshot[]
+  edges: Edge[]
+  center: FlowPoint
+}
+
+function cloneSerializableValue<T>(value: T): T {
+  if (typeof globalThis.structuredClone === 'function') {
+    return globalThis.structuredClone(value)
+  }
+
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+function getSelectionDuplicationIssue(nodes: Node[]): SelectionDuplicationIssue | null {
+  if (nodes.length === 0) {
+    return null
+  }
+
+  if (nodes.some((node) => node.data?.type === 'logic:return')) {
+    return {
+      title: 'Return node already exists',
+      message: 'Each pipeline can only contain one Return node.',
+    }
+  }
+
+  if (nodes.length === 1 && isGroupNode(nodes[0])) {
+    return {
+      title: 'Duplicate is not supported for groups',
+      message: 'Create a new group from a node selection instead.',
+    }
+  }
+
+  return null
+}
+
+function buildDuplicatedSelection(
+  nodes: Node[],
+  edges: Edge[],
+  nodeIds: string[],
+): InsertedSelection | null {
+  const selectedIdSet = new Set(nodeIds)
+  const selectedNodes = normalizeNodesForSubflows(nodes.filter((node) => selectedIdSet.has(node.id)))
+
+  if (selectedNodes.length === 0) {
+    return null
+  }
+
+  const nodesById = new Map(nodes.map((node) => [node.id, node]))
+  const nodeIdMap = new Map<string, string>()
+
+  selectedNodes.forEach((node) => {
+    nodeIdMap.set(node.id, buildGeneratedNodeId(node))
+  })
+
+  const duplicatedNodes = selectedNodes.map((node) => {
+    const duplicatedNode = cloneSerializableValue(node)
+    const parentSelected = Boolean(node.parentId && selectedIdSet.has(node.parentId))
+    const parentExists = Boolean(node.parentId && nodesById.has(node.parentId))
+    const duplicateParentId = parentSelected && node.parentId
+      ? nodeIdMap.get(node.parentId)
+      : parentExists
+      ? node.parentId
+      : undefined
+
+    let nextPosition = { ...node.position }
+
+    if (parentSelected) {
+      nextPosition = { ...node.position }
+    } else if (parentExists) {
+      nextPosition = {
+        x: node.position.x + DUPLICATE_SELECTION_OFFSET.x,
+        y: node.position.y + DUPLICATE_SELECTION_OFFSET.y,
+      }
+    } else {
+      const absolutePosition = getAbsoluteNodePosition(node, nodesById)
+      nextPosition = {
+        x: absolutePosition.x + DUPLICATE_SELECTION_OFFSET.x,
+        y: absolutePosition.y + DUPLICATE_SELECTION_OFFSET.y,
+      }
+    }
+
+    const nextNode: Node = {
+      ...duplicatedNode,
+      id: nodeIdMap.get(node.id)!,
+      parentId: duplicateParentId,
+      position: nextPosition,
+      selected: true,
+      dragging: false,
+    }
+
+    if (!duplicateParentId) {
+      nextNode.extent = undefined
+    }
+
+    return nextNode
+  })
+
+  const duplicatedEdges = edges.flatMap((edge) => {
+    const source = nodeIdMap.get(edge.source)
+    const target = nodeIdMap.get(edge.target)
+
+    if (!source || !target) {
+      return []
+    }
+
+    const nextEdge: Edge = {
+      ...cloneSerializableValue(edge),
+      id: `edge-${crypto.randomUUID()}`,
+      source,
+      target,
+      selected: false,
+    }
+
+    return [nextEdge]
+  })
+
+  return {
+    nodes: duplicatedNodes,
+    edges: duplicatedEdges,
+    selectedNodeIds: duplicatedNodes.map((node) => node.id),
+  }
+}
+
+function buildCopiedSelectionSnapshot(
+  nodes: Node[],
+  edges: Edge[],
+  nodeIds: string[],
+): CopiedSelectionSnapshot | null {
+  const selectedIdSet = new Set(nodeIds)
+  const selectedNodes = normalizeNodesForSubflows(nodes.filter((node) => selectedIdSet.has(node.id)))
+
+  if (selectedNodes.length === 0) {
+    return null
+  }
+
+  const nodesById = new Map(nodes.map((node) => [node.id, node]))
+  const copiedNodes = selectedNodes.map((node) => ({
+    node: cloneSerializableValue(node),
+    absolutePosition: getAbsoluteNodePosition(node, nodesById),
+  }))
+
+  const minX = Math.min(...copiedNodes.map(({ absolutePosition }) => absolutePosition.x))
+  const minY = Math.min(...copiedNodes.map(({ absolutePosition }) => absolutePosition.y))
+  const maxX = Math.max(...copiedNodes.map(({ node, absolutePosition }) => absolutePosition.x + getNodeWidth(node)))
+  const maxY = Math.max(...copiedNodes.map(({ node, absolutePosition }) => absolutePosition.y + getNodeHeight(node)))
+
+  return {
+    nodes: copiedNodes,
+    edges: edges
+      .filter((edge) => selectedIdSet.has(edge.source) && selectedIdSet.has(edge.target))
+      .map((edge) => cloneSerializableValue(edge)),
+    center: {
+      x: (minX + maxX) / 2,
+      y: (minY + maxY) / 2,
+    },
+  }
+}
+
+function getPasteSelectionIssue(
+  nodes: Node[],
+  copiedSelection: CopiedSelectionSnapshot | null,
+): SelectionDuplicationIssue | null {
+  if (!copiedSelection || copiedSelection.nodes.length === 0) {
+    return {
+      title: 'Nothing copied yet',
+      message: 'Select one or more nodes on the canvas and press Ctrl+C first.',
+    }
+  }
+
+  const includesReturnNode = copiedSelection.nodes.some(({ node }) => node.data?.type === 'logic:return')
+  if (includesReturnNode && hasReturnNode(nodes)) {
+    return {
+      title: 'Return node already exists',
+      message: 'Each pipeline can only contain one Return node.',
+    }
+  }
+
+  return null
+}
+
+function buildPastedSelection(
+  copiedSelection: CopiedSelectionSnapshot,
+  pastePosition: FlowPoint,
+): InsertedSelection | null {
+  const copiedNodes = copiedSelection.nodes.map(({ node }) => node)
+
+  if (copiedNodes.length === 0) {
+    return null
+  }
+
+  const selectedIdSet = new Set(copiedNodes.map((node) => node.id))
+  const nodeIdMap = new Map<string, string>()
+  const delta = {
+    x: pastePosition.x - copiedSelection.center.x,
+    y: pastePosition.y - copiedSelection.center.y,
+  }
+
+  copiedNodes.forEach((node) => {
+    nodeIdMap.set(node.id, buildGeneratedNodeId(node))
+  })
+
+  const pastedNodes = copiedSelection.nodes.map(({ node, absolutePosition }) => {
+    const pastedNode = cloneSerializableValue(node)
+    const parentSelected = Boolean(node.parentId && selectedIdSet.has(node.parentId))
+    const nextParentId = parentSelected && node.parentId
+      ? nodeIdMap.get(node.parentId)
+      : undefined
+
+    const nextNode: Node = {
+      ...pastedNode,
+      id: nodeIdMap.get(node.id)!,
+      parentId: nextParentId,
+      position: nextParentId
+        ? { ...node.position }
+        : {
+          x: absolutePosition.x + delta.x,
+          y: absolutePosition.y + delta.y,
+        },
+      selected: true,
+      dragging: false,
+    }
+
+    if (!nextParentId) {
+      nextNode.extent = undefined
+    }
+
+    return nextNode
+  })
+
+  const pastedEdges = copiedSelection.edges.flatMap((edge) => {
+    const source = nodeIdMap.get(edge.source)
+    const target = nodeIdMap.get(edge.target)
+
+    if (!source || !target) {
+      return []
+    }
+
+    return [{
+      ...cloneSerializableValue(edge),
+      id: `edge-${crypto.randomUUID()}`,
+      source,
+      target,
+      selected: false,
+    }]
+  })
+
+  return {
+    nodes: pastedNodes,
+    edges: pastedEdges,
+    selectedNodeIds: pastedNodes.map((node) => node.id),
+  }
+}
+
 function getVisualExecutionStatus(status?: string): 'pending' | 'running' | 'success' | 'error' | undefined {
   if (!status) return undefined
 
@@ -537,6 +813,9 @@ function PipelineEditor() {
   const queryClient = useQueryClient()
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const addJSONTemplateInputRef = useRef<HTMLInputElement>(null)
+  const copiedSelectionRef = useRef<CopiedSelectionSnapshot | null>(null)
+  const lastCanvasPointerClientPositionRef = useRef<FlowPoint | null>(null)
+  const isCanvasPointerActiveRef = useRef(false)
   const {
     screenToFlowPosition,
     getViewport,
@@ -575,6 +854,14 @@ function PipelineEditor() {
   const nameInputRef = useRef<HTMLInputElement>(null)
   const selectedNodes = nodes.filter((node) => node.selected)
   const selectedNodeIds = selectedNodes.map((node) => node.id)
+  const activeSelectionIds = selectedNodeIds.length > 0
+    ? selectedNodeIds
+    : selectedNodeId
+    ? [selectedNodeId]
+    : []
+  const activeSelectionIdSet = new Set(activeSelectionIds)
+  const activeSelectionNodes = nodes.filter((node) => activeSelectionIdSet.has(node.id))
+  const activeSelectionDuplicationIssue = getSelectionDuplicationIssue(activeSelectionNodes)
   const isCanvasInteractionBlocked = isBlockingOverlayOpen || showSaveTemplateModal || showTemplateLibraryModal || templateMenuPosition !== null || assistantEditLockActive
   const isCanvasInteractionDisabled = isCanvasInteractionBlocked || !isFlowInteractive
 
@@ -597,6 +884,44 @@ function PipelineEditor() {
   const buildCurrentDefinition = useCallback((): FlowDefinitionDocument => (
     buildFlowDefinitionDocument(nodes, edges, getViewport())
   ), [edges, getViewport, nodes])
+
+  const updateCanvasPointerPosition = useCallback((clientPosition: FlowPoint) => {
+    isCanvasPointerActiveRef.current = true
+    lastCanvasPointerClientPositionRef.current = clientPosition
+  }, [])
+
+  const handleCanvasMouseEnter = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    updateCanvasPointerPosition({ x: event.clientX, y: event.clientY })
+  }, [updateCanvasPointerPosition])
+
+  const handleCanvasMouseMove = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    updateCanvasPointerPosition({ x: event.clientX, y: event.clientY })
+  }, [updateCanvasPointerPosition])
+
+  const handleCanvasMouseLeave = useCallback(() => {
+    isCanvasPointerActiveRef.current = false
+  }, [])
+
+  const getActiveCanvasPastePosition = useCallback((): FlowPoint | null => {
+    if (!isCanvasPointerActiveRef.current) {
+      return null
+    }
+
+    const clientPosition = lastCanvasPointerClientPositionRef.current
+    if (clientPosition) {
+      return screenToFlowPosition(clientPosition)
+    }
+
+    const wrapperBounds = reactFlowWrapper.current?.getBoundingClientRect()
+    if (!wrapperBounds) {
+      return null
+    }
+
+    return screenToFlowPosition({
+      x: wrapperBounds.left + (wrapperBounds.width / 2),
+      y: wrapperBounds.top + (wrapperBounds.height / 2),
+    })
+  }, [screenToFlowPosition])
 
   useEffect(() => {
     if (pipeline) {
@@ -1236,93 +1561,6 @@ function PipelineEditor() {
     event.dataTransfer.effectAllowed = 'move'
   }, [])
 
-  const buildPaneContextMenuItems = useCallback((clientX: number, clientY: number): ContextMenuItem[] => {
-    const buildNodeItem = (
-      nodeType: typeof NODE_CATEGORIES[number]['types'][number],
-      contextLabel: string,
-    ): ContextMenuItem => {
-      const Icon = nodeMenuIconMap[nodeType.icon] || Zap
-
-      return {
-        label: nodeType.label,
-        icon: <Icon className="w-3.5 h-3.5" style={{ color: nodeType.color }} />,
-        searchText: `${nodeType.label} ${nodeType.description} ${contextLabel}`,
-        onClick: () => createNodeAtPosition(
-          nodeType.type,
-          nodeType.label,
-          { ...nodeType.defaultConfig },
-          { x: clientX, y: clientY },
-        ),
-      }
-    }
-
-    const buildProviderGroup = (
-      label: string,
-      Icon: React.ElementType,
-      color: string,
-      nodeTypes: typeof NODE_CATEGORIES[number]['types'],
-      categoryLabel: string,
-    ): ContextMenuItem | null => {
-      if (nodeTypes.length === 0) {
-        return null
-      }
-
-      return {
-        label,
-        icon: <Icon className="w-3.5 h-3.5" style={{ color }} />,
-        searchText: `${label} ${categoryLabel} add node`,
-        children: nodeTypes.map((nodeType) => buildNodeItem(nodeType, `${categoryLabel} ${label}`)),
-      }
-    }
-
-    const addNodeItems = NODE_CATEGORIES.map((category) => {
-      const CategoryIcon = categoryMenuIconMap[category.id] || Zap
-
-      if (category.id === 'action' || category.id === 'tool') {
-        const generalTypes = category.types.filter((nodeType) => (
-          !isProxmoxNodeType(nodeType.type) && !isKubernetesNodeType(nodeType.type)
-        ))
-        const proxmoxTypes = category.types.filter((nodeType) => isProxmoxNodeType(nodeType.type))
-        const kubernetesTypes = category.types.filter((nodeType) => isKubernetesNodeType(nodeType.type))
-        const providerGroups = [
-          buildProviderGroup('General', Workflow, category.color, generalTypes, category.label),
-          buildProviderGroup('Proxmox', Server, category.color, proxmoxTypes, category.label),
-          buildProviderGroup('Kubernetes', Shield, category.color, kubernetesTypes, category.label),
-        ].filter((item): item is ContextMenuItem => item !== null)
-
-        return {
-          label: category.label,
-          icon: <CategoryIcon className="w-3.5 h-3.5" style={{ color: category.color }} />,
-          searchText: `${category.label} add node`,
-          children: providerGroups,
-        }
-      }
-
-      return {
-        label: category.label,
-        icon: <CategoryIcon className="w-3.5 h-3.5" style={{ color: category.color }} />,
-        searchText: `${category.label} add node`,
-        children: category.types.map((nodeType) => buildNodeItem(nodeType, category.label)),
-      }
-    })
-
-    return [
-      ...addNodeItems,
-      { divider: true, label: '' },
-      {
-        label: 'Save pipeline',
-        icon: <Save className="w-3.5 h-3.5" />,
-        shortcut: 'Ctrl+S',
-        onClick: handleSave,
-      },
-      {
-        label: 'Run pipeline',
-        icon: <Play className="w-3.5 h-3.5" />,
-        onClick: handleRun,
-      },
-    ]
-  }, [createNodeAtPosition, handleRun, handleSave])
-
   const selectedNode = nodes.find((n) => n.id === selectedNodeId)
   const activeNodeLog = activeNodeLogId ? nodeLogs[activeNodeLogId] : null
   const activeNodeLogNode = activeNodeLogId ? nodes.find((node) => node.id === activeNodeLogId) : undefined
@@ -1557,10 +1795,205 @@ function PipelineEditor() {
     setContextMenu(null)
   }, [addToast, nodes, selectedNodes, setNodes, setSelectedNodeId])
 
-  const buildSelectionContextMenuItems = useCallback((selection: Node[]): ContextMenuItem[] => {
-    const groupable = canGroupNodes(selection)
+  const duplicateNodesByIds = useCallback((nodeIds: string[]) => {
+    const selection = nodes.filter((node) => nodeIds.includes(node.id))
+    const issue = getSelectionDuplicationIssue(selection)
+
+    if (issue) {
+      addToast({
+        type: 'warning',
+        title: issue.title,
+        message: issue.message,
+      })
+      return
+    }
+
+    const duplicatedSelection = buildDuplicatedSelection(nodes, edges, nodeIds)
+    if (!duplicatedSelection) {
+      return
+    }
+
+    setNodes((currentNodes) => normalizeNodesForSubflows([
+      ...currentNodes.map((node) => ({ ...node, selected: false })),
+      ...duplicatedSelection.nodes,
+    ]))
+    setEdges((currentEdges) => currentEdges.concat(duplicatedSelection.edges))
+    setSelectedNodeId(duplicatedSelection.selectedNodeIds.length === 1 ? duplicatedSelection.selectedNodeIds[0] : null)
+    setContextMenu(null)
+  }, [addToast, edges, nodes, setEdges, setNodes, setSelectedNodeId])
+
+  const copyNodesByIds = useCallback((nodeIds: string[]) => {
+    const copiedSelection = buildCopiedSelectionSnapshot(nodes, edges, nodeIds)
+    if (!copiedSelection) {
+      return
+    }
+
+    copiedSelectionRef.current = copiedSelection
+    setContextMenu(null)
+  }, [edges, nodes])
+
+  const pasteCopiedSelectionAtPosition = useCallback((pastePosition: FlowPoint | null) => {
+    if (!pastePosition) {
+      return
+    }
+
+    const issue = getPasteSelectionIssue(nodes, copiedSelectionRef.current)
+    if (issue) {
+      addToast({
+        type: 'warning',
+        title: issue.title,
+        message: issue.message,
+      })
+      return
+    }
+
+    const pastedSelection = buildPastedSelection(copiedSelectionRef.current!, pastePosition)
+    if (!pastedSelection) {
+      return
+    }
+
+    setNodes((currentNodes) => normalizeNodesForSubflows([
+      ...currentNodes.map((node) => ({ ...node, selected: false })),
+      ...pastedSelection.nodes,
+    ]))
+    setEdges((currentEdges) => currentEdges.concat(pastedSelection.edges))
+    setSelectedNodeId(pastedSelection.selectedNodeIds.length === 1 ? pastedSelection.selectedNodeIds[0] : null)
+    setContextMenu(null)
+  }, [addToast, nodes, setEdges, setNodes, setSelectedNodeId])
+
+  const pasteCopiedSelectionAtClientPosition = useCallback((clientPosition: FlowPoint) => {
+    pasteCopiedSelectionAtPosition(screenToFlowPosition(clientPosition))
+  }, [pasteCopiedSelectionAtPosition, screenToFlowPosition])
+
+  const pasteCopiedSelectionAtCursor = useCallback(() => {
+    pasteCopiedSelectionAtPosition(getActiveCanvasPastePosition())
+  }, [getActiveCanvasPastePosition, pasteCopiedSelectionAtPosition])
+
+  const buildPaneContextMenuItems = useCallback((clientX: number, clientY: number): ContextMenuItem[] => {
+    const buildNodeItem = (
+      nodeType: typeof NODE_CATEGORIES[number]['types'][number],
+      contextLabel: string,
+    ): ContextMenuItem => {
+      const Icon = nodeMenuIconMap[nodeType.icon] || Zap
+
+      return {
+        label: nodeType.label,
+        icon: <Icon className="w-3.5 h-3.5" style={{ color: nodeType.color }} />,
+        searchText: `${nodeType.label} ${nodeType.description} ${contextLabel}`,
+        onClick: () => createNodeAtPosition(
+          nodeType.type,
+          nodeType.label,
+          { ...nodeType.defaultConfig },
+          { x: clientX, y: clientY },
+        ),
+      }
+    }
+
+    const buildProviderGroup = (
+      label: string,
+      Icon: React.ElementType,
+      color: string,
+      nodeTypes: typeof NODE_CATEGORIES[number]['types'],
+      categoryLabel: string,
+    ): ContextMenuItem | null => {
+      if (nodeTypes.length === 0) {
+        return null
+      }
+
+      return {
+        label,
+        icon: <Icon className="w-3.5 h-3.5" style={{ color }} />,
+        searchText: `${label} ${categoryLabel} add node`,
+        children: nodeTypes.map((nodeType) => buildNodeItem(nodeType, `${categoryLabel} ${label}`)),
+      }
+    }
+
+    const addNodeItems = NODE_CATEGORIES.map((category) => {
+      const CategoryIcon = categoryMenuIconMap[category.id] || Zap
+
+      if (category.id === 'action' || category.id === 'tool') {
+        const generalTypes = category.types.filter((nodeType) => (
+          !isProxmoxNodeType(nodeType.type) && !isKubernetesNodeType(nodeType.type)
+        ))
+        const proxmoxTypes = category.types.filter((nodeType) => isProxmoxNodeType(nodeType.type))
+        const kubernetesTypes = category.types.filter((nodeType) => isKubernetesNodeType(nodeType.type))
+        const providerGroups = [
+          buildProviderGroup('General', Workflow, category.color, generalTypes, category.label),
+          buildProviderGroup('Proxmox', Server, category.color, proxmoxTypes, category.label),
+          buildProviderGroup('Kubernetes', Shield, category.color, kubernetesTypes, category.label),
+        ].filter((item): item is ContextMenuItem => item !== null)
+
+        return {
+          label: category.label,
+          icon: <CategoryIcon className="w-3.5 h-3.5" style={{ color: category.color }} />,
+          searchText: `${category.label} add node`,
+          children: providerGroups,
+        }
+      }
+
+      return {
+        label: category.label,
+        icon: <CategoryIcon className="w-3.5 h-3.5" style={{ color: category.color }} />,
+        searchText: `${category.label} add node`,
+        children: category.types.map((nodeType) => buildNodeItem(nodeType, category.label)),
+      }
+    })
+
+    const pasteItem = copiedSelectionRef.current
+      ? [{
+        label: 'Paste',
+        icon: <Copy className="w-3.5 h-3.5" />,
+        shortcut: 'Ctrl+V',
+        searchText: 'paste copied nodes selection',
+        onClick: () => pasteCopiedSelectionAtClientPosition({ x: clientX, y: clientY }),
+      }]
+      : []
 
     return [
+      ...pasteItem,
+      ...(pasteItem.length > 0 ? [{ divider: true, label: '' } satisfies ContextMenuItem] : []),
+      ...addNodeItems,
+      { divider: true, label: '' },
+      {
+        label: 'Save pipeline',
+        icon: <Save className="w-3.5 h-3.5" />,
+        shortcut: 'Ctrl+S',
+        onClick: handleSave,
+      },
+      {
+        label: 'Run pipeline',
+        icon: <Play className="w-3.5 h-3.5" />,
+        onClick: handleRun,
+      },
+    ]
+  }, [createNodeAtPosition, handleRun, handleSave, pasteCopiedSelectionAtClientPosition])
+
+  const duplicateActiveSelection = useCallback(() => {
+    if (activeSelectionIds.length === 0) {
+      return
+    }
+
+    duplicateNodesByIds(activeSelectionIds)
+  }, [activeSelectionIds, duplicateNodesByIds])
+
+  const buildSelectionContextMenuItems = useCallback((selection: Node[]): ContextMenuItem[] => {
+    const groupable = canGroupNodes(selection)
+    const duplicationIssue = getSelectionDuplicationIssue(selection)
+
+    return [
+      {
+        label: 'Copy selection',
+        icon: <Copy className="w-3.5 h-3.5" />,
+        shortcut: 'Ctrl+C',
+        onClick: () => copyNodesByIds(selection.map((node) => node.id)),
+      },
+      {
+        label: 'Duplicate selection',
+        icon: <Copy className="w-3.5 h-3.5" />,
+        shortcut: 'Ctrl+D',
+        disabled: Boolean(duplicationIssue),
+        onClick: () => duplicateNodesByIds(selection.map((node) => node.id)),
+      },
       {
         label: 'Make group',
         icon: <Workflow className="w-3.5 h-3.5" />,
@@ -1579,44 +2012,7 @@ function PipelineEditor() {
         onClick: () => removeNodesByIds(selection.map((node) => node.id)),
       },
     ]
-  }, [createGroupFromSelection, removeNodesByIds])
-
-  const duplicateNode = useCallback(() => {
-    if (!selectedNodeId) return
-    const node = nodes.find((n) => n.id === selectedNodeId)
-    if (!node) return
-    if (isGroupNode(node)) {
-      addToast({
-        type: 'warning',
-        title: 'Duplicate is not supported for groups',
-        message: 'Create a new group from a node selection instead.',
-      })
-      return
-    }
-    if (node.data?.type === 'logic:return') {
-      addToast({
-        type: 'warning',
-        title: 'Return node already exists',
-        message: 'Each pipeline can only contain one Return node.',
-      })
-      return
-    }
-
-    const newNode: Node = {
-      id: `${node.data.type}-${Date.now()}`,
-      type: 'automator',
-      position: { x: node.position.x + 40, y: node.position.y + 40 },
-      data: { ...node.data },
-    }
-
-    setNodes((nds) => nds.concat(newNode))
-    setSelectedNodeId(newNode.id)
-  }, [addToast, selectedNodeId, nodes, setNodes, setSelectedNodeId])
-
-  const deleteNode = useCallback(() => {
-    if (!selectedNodeId) return
-    removeNodesByIds([selectedNodeId])
-  }, [removeNodesByIds, selectedNodeId])
+  }, [copyNodesByIds, createGroupFromSelection, duplicateNodesByIds, removeNodesByIds])
 
   const disconnectNode = useCallback(() => {
     if (!selectedNodeId) return
@@ -1638,25 +2034,30 @@ function PipelineEditor() {
         return
       }
 
-      const activeSelectionIds = selectedNodeIds.length > 0
-        ? selectedNodeIds
-        : selectedNodeId
-        ? [selectedNodeId]
-        : []
+      const normalizedKey = e.key.toLowerCase()
+      const isCanvasShortcutActive = isCanvasPointerActiveRef.current
 
       if ((e.key === 'Delete' || e.key === 'Backspace') && activeSelectionIds.length > 0) {
         e.preventDefault()
         removeNodesByIds(activeSelectionIds)
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'd' && activeSelectionIds.length === 1 && selectedNodeId) {
+      if ((e.ctrlKey || e.metaKey) && normalizedKey === 'c' && isCanvasShortcutActive && activeSelectionIds.length > 0) {
         e.preventDefault()
-        duplicateNode()
+        copyNodesByIds(activeSelectionIds)
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k' && activeSelectionIds.length === 1 && selectedNodeId) {
+      if ((e.ctrlKey || e.metaKey) && normalizedKey === 'v' && isCanvasShortcutActive) {
+        e.preventDefault()
+        pasteCopiedSelectionAtCursor()
+      }
+      if ((e.ctrlKey || e.metaKey) && normalizedKey === 'd' && activeSelectionIds.length > 0) {
+        e.preventDefault()
+        duplicateNodesByIds(activeSelectionIds)
+      }
+      if ((e.ctrlKey || e.metaKey) && normalizedKey === 'k' && activeSelectionIds.length === 1 && selectedNodeId) {
         e.preventDefault()
         disconnectNode()
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      if ((e.ctrlKey || e.metaKey) && normalizedKey === 's') {
         e.preventDefault()
         handleSave()
       }
@@ -1664,7 +2065,7 @@ function PipelineEditor() {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [selectedNodeId, selectedNodeIds, duplicateNode, disconnectNode, handleSave, isCanvasInteractionDisabled, removeNodesByIds])
+  }, [activeSelectionIds, copyNodesByIds, disconnectNode, duplicateNodesByIds, handleSave, isCanvasInteractionDisabled, pasteCopiedSelectionAtCursor, removeNodesByIds, selectedNodeId])
 
   const handleNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
     event.preventDefault()
@@ -1712,27 +2113,16 @@ function PipelineEditor() {
         onClick: () => setSelectedNodeId(node.id),
       },
       {
+        label: 'Copy',
+        icon: <Copy className="w-3.5 h-3.5" />,
+        shortcut: 'Ctrl+C',
+        onClick: () => copyNodesByIds([node.id]),
+      },
+      {
         label: 'Duplicate',
         icon: <Copy className="w-3.5 h-3.5" />,
         shortcut: 'Ctrl+D',
-        onClick: () => {
-          if (node.data?.type === 'logic:return') {
-            addToast({
-              type: 'warning',
-              title: 'Return node already exists',
-              message: 'Each pipeline can only contain one Return node.',
-            })
-            return
-          }
-          const newNode: Node = {
-            id: `${node.data.type}-${Date.now()}`,
-            type: 'automator',
-            position: { x: node.position.x + 40, y: node.position.y + 40 },
-            data: { ...node.data },
-          }
-          setNodes((nds) => nds.concat(newNode))
-          setSelectedNodeId(newNode.id)
-        },
+        onClick: () => duplicateNodesByIds([node.id]),
       },
       {
         label: 'Disconnect',
@@ -1756,7 +2146,7 @@ function PipelineEditor() {
       },
     ]
     setContextMenu({ x: event.clientX, y: event.clientY, items })
-  }, [addToast, buildSelectionContextMenuItems, isFlowInteractive, removeNodesByIds, selectedNodes, setSelectedNodeId, setNodes, setEdges, ungroupNode])
+  }, [buildSelectionContextMenuItems, copyNodesByIds, duplicateNodesByIds, isFlowInteractive, removeNodesByIds, selectedNodes, setSelectedNodeId, setEdges, ungroupNode])
 
   const handleEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
     event.preventDefault()
@@ -1837,13 +2227,6 @@ function PipelineEditor() {
   })
 
   const renderedNodeById = new Map(renderedNodes.map((node) => [node.id, node]))
-  const activeSelectionIds = new Set(
-    selectedNodeIds.length > 0
-      ? selectedNodeIds
-      : selectedNodeId
-      ? [selectedNodeId]
-      : [],
-  )
 
   const renderedEdges = edges.map((edge) => {
     const isHighlightMode = highlightedNodes.size > 0
@@ -1872,15 +2255,15 @@ function PipelineEditor() {
       }
     }
 
-    const isConnectedToSelection = activeSelectionIds.has(edge.source) || activeSelectionIds.has(edge.target)
-    const connectedSelectionCount = Number(activeSelectionIds.has(edge.source)) + Number(activeSelectionIds.has(edge.target))
+    const isConnectedToSelection = activeSelectionIdSet.has(edge.source) || activeSelectionIdSet.has(edge.target)
+    const connectedSelectionCount = Number(activeSelectionIdSet.has(edge.source)) + Number(activeSelectionIdSet.has(edge.target))
     const edgeStrokeWidth = isConnectedToSelection
       ? connectedSelectionCount === 2 ? 2.9 : 2.6
       : (edge.style?.strokeWidth ?? baseEdgeOptions.style.strokeWidth)
     const sourceNode = renderedNodeById.get(edge.source)
     const targetNode = renderedNodeById.get(edge.target)
-    const sourceBorderColor = getRenderedNodeBorderColor(sourceNode, activeSelectionIds)
-    const targetBorderColor = getRenderedNodeBorderColor(targetNode, activeSelectionIds)
+    const sourceBorderColor = getRenderedNodeBorderColor(sourceNode, activeSelectionIdSet)
+    const targetBorderColor = getRenderedNodeBorderColor(targetNode, activeSelectionIdSet)
 
     return {
       ...edge,
@@ -1928,6 +2311,9 @@ function PipelineEditor() {
             'relative flex-1 min-h-0',
             assistantEditLockActive && '[&_.react-flow__background]:opacity-45 [&_.react-flow__viewport]:opacity-70 [&_.react-flow__viewport]:saturate-50',
           )}
+          onMouseEnter={handleCanvasMouseEnter}
+          onMouseMove={handleCanvasMouseMove}
+          onMouseLeave={handleCanvasMouseLeave}
         >
           <ReactFlow
             nodes={renderedNodes}
@@ -2170,15 +2556,25 @@ function PipelineEditor() {
               </FloatingEditorPanel>
             </Panel>
 
-            {selectedNodeId && (
+            {activeSelectionIds.length > 0 && (
               <Panel position="bottom-right" className="!m-4">
                 <div className="bg-bg-elevated border border-border rounded-lg shadow-lg p-2 flex gap-1">
-                  {selectedNode?.data?.type !== VISUAL_GROUP_TYPE && (
-                    <Button variant="ghost" size="sm" onClick={duplicateNode} title="Duplicate">
+                  {!activeSelectionDuplicationIssue && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={duplicateActiveSelection}
+                      title={activeSelectionIds.length > 1 ? 'Duplicate selection' : 'Duplicate'}
+                    >
                       <Copy className="w-4 h-4" />
                     </Button>
                   )}
-                  <Button variant="ghost" size="sm" onClick={deleteNode} title="Delete">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeNodesByIds(activeSelectionIds)}
+                    title={activeSelectionIds.length > 1 ? 'Delete selection' : 'Delete'}
+                  >
                     <Trash2 className="w-4 h-4 text-red-400" />
                   </Button>
                 </div>
