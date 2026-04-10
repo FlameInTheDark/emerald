@@ -180,7 +180,7 @@ func normalizeManualInput(input ClusterInput) (*NormalizedCluster, error) {
 
 	contextName := strings.TrimSpace(input.ContextName)
 	if contextName == "" {
-		contextName = "automator"
+		contextName = "emerald"
 	}
 
 	defaultNamespace := strings.TrimSpace(input.DefaultNamespace)
@@ -188,8 +188,8 @@ func normalizeManualInput(input ClusterInput) (*NormalizedCluster, error) {
 		defaultNamespace = corev1.NamespaceDefault
 	}
 
-	clusterName := "automator-cluster"
-	authName := "automator-user"
+	clusterName := "emerald-cluster"
+	authName := "emerald-user"
 	kubeconfigStruct := clientcmdapi.Config{
 		APIVersion:     "v1",
 		Kind:           "Config",

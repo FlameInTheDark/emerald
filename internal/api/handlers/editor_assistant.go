@@ -9,17 +9,18 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/assistants"
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/db/query"
-	"github.com/FlameInTheDark/automator/internal/llm"
-	"github.com/FlameInTheDark/automator/internal/skills"
+	"github.com/FlameInTheDark/emerald/internal/assistants"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/query"
+	"github.com/FlameInTheDark/emerald/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/skills"
 )
 
 type EditorAssistantHandler struct {
 	providerStore     *query.LLMProviderStore
 	assistantProfiles *assistants.Store
 	skillStore        skills.Reader
+	validator         assistants.FlowValidator
 }
 
 type editorAssistantRequest struct {
@@ -51,18 +52,24 @@ type editorAssistantToolExecutor struct {
 	snapshot    assistants.PipelineSnapshot
 	editEnabled bool
 	skillStore  skills.Reader
+	validator   assistants.FlowValidator
 }
 
 func NewEditorAssistantHandler(
 	providerStore *query.LLMProviderStore,
 	assistantProfiles *assistants.Store,
 	skillStore skills.Reader,
+	validators ...assistants.FlowValidator,
 ) *EditorAssistantHandler {
-	return &EditorAssistantHandler{
+	handler := &EditorAssistantHandler{
 		providerStore:     providerStore,
 		assistantProfiles: assistantProfiles,
 		skillStore:        skillStore,
 	}
+	if len(validators) > 0 {
+		handler.validator = validators[0]
+	}
+	return handler
 }
 
 func (h *EditorAssistantHandler) ChatStream(c *fiber.Ctx) error {
@@ -119,7 +126,7 @@ func (h *EditorAssistantHandler) ChatStream(c *fiber.Ctx) error {
 		streamCtx = userCtx
 	}
 
-	toolExecutor := newEditorAssistantToolExecutor(snapshot, mode == "edit", h.skillStore)
+	toolExecutor := newEditorAssistantToolExecutor(snapshot, mode == "edit", h.skillStore, h.validator)
 
 	c.Set(fiber.HeaderContentType, "text/event-stream")
 	c.Set(fiber.HeaderCacheControl, "no-cache")
@@ -368,12 +375,16 @@ func buildEditorAssistantContextMessage(
 ` + string(payload))
 }
 
-func newEditorAssistantToolExecutor(snapshot assistants.PipelineSnapshot, editEnabled bool, skillStore skills.Reader) *editorAssistantToolExecutor {
-	return &editorAssistantToolExecutor{
+func newEditorAssistantToolExecutor(snapshot assistants.PipelineSnapshot, editEnabled bool, skillStore skills.Reader, validators ...assistants.FlowValidator) *editorAssistantToolExecutor {
+	executor := &editorAssistantToolExecutor{
 		snapshot:    snapshot,
 		editEnabled: editEnabled,
 		skillStore:  skillStore,
 	}
+	if len(validators) > 0 {
+		executor.validator = validators[0]
+	}
+	return executor
 }
 
 func (e *editorAssistantToolExecutor) GetAllTools() []llm.ToolDefinition {
@@ -456,7 +467,7 @@ func (e *editorAssistantToolExecutor) Execute(ctx context.Context, name string, 
 		return nil, fmt.Errorf("parse live edit arguments: %w", err)
 	}
 
-	normalized, nextSnapshot, err := assistants.ValidateAndApplyOperations(e.snapshot, req.Operations)
+	normalized, nextSnapshot, err := assistants.ValidateAndApplyOperations(e.snapshot, req.Operations, e.validator)
 	if err != nil {
 		return nil, err
 	}

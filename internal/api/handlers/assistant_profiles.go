@@ -5,7 +5,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/assistants"
+	"github.com/FlameInTheDark/emerald/internal/assistants"
 )
 
 type AssistantProfileHandler struct {

@@ -5,7 +5,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/llm"
 )
 
 func llmErrorStatus(err error) int {

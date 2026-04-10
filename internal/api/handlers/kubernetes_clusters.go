@@ -5,9 +5,9 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/db/query"
-	ik8s "github.com/FlameInTheDark/automator/internal/kubernetes"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/query"
+	ik8s "github.com/FlameInTheDark/emerald/internal/kubernetes"
 )
 
 type kubernetesClusterRequest struct {

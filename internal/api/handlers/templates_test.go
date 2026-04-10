@@ -10,10 +10,10 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/db"
-	"github.com/FlameInTheDark/automator/internal/db/query"
-	"github.com/FlameInTheDark/automator/internal/pipelineops"
-	"github.com/FlameInTheDark/automator/internal/templateops"
+	"github.com/FlameInTheDark/emerald/internal/db"
+	"github.com/FlameInTheDark/emerald/internal/db/query"
+	"github.com/FlameInTheDark/emerald/internal/pipelineops"
+	"github.com/FlameInTheDark/emerald/internal/templateops"
 )
 
 func TestTemplateHandlerCreateCloneExportAndCreatePipeline(t *testing.T) {
@@ -198,7 +198,7 @@ func TestTemplateHandlerImportBundleReturnsPartialSuccess(t *testing.T) {
 func newTemplateHandlerTestDeps(t *testing.T) (*TemplateHandler, *PipelineHandler) {
 	t.Helper()
 
-	database, err := db.New(filepath.Join(t.TempDir(), "automator.db"))
+	database, err := db.New(filepath.Join(t.TempDir(), "emerald.db"))
 	if err != nil {
 		t.Fatalf("db.New: %v", err)
 	}

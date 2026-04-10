@@ -1,0 +1,7 @@
+{
+  "id": "sample-request-kit",
+  "name": "Sample Request Kit",
+  "version": "0.1.0",
+  "description": "Reference plugin bundle with one branching action node and one tool node.",
+  "executable": "./bin/sample-request-kit.exe"
+}

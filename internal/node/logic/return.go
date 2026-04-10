@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/FlameInTheDark/automator/internal/node"
-	"github.com/FlameInTheDark/automator/internal/templating"
+	"github.com/FlameInTheDark/emerald/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/templating"
 )
 
 type returnConfig struct {

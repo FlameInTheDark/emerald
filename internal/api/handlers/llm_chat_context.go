@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/llm"
 )
 
 const (

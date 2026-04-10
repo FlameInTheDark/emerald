@@ -1,14 +1,10 @@
 .git
 .idea
-automator
-automator.exe
-automator.exe~
 emerald
 emerald.exe
 emerald.exe~
 server.exe
 emerald.db
-automator-smoketest.db
 emerald-smoketest.db
 smoke.out
 smoke.err

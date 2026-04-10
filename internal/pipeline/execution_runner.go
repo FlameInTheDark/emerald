@@ -9,8 +9,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
 )
+
+type FlowSemanticValidator interface {
+	ValidateFlowData(ctx context.Context, flowData FlowData, allowUnavailablePlugins bool) error
+}
+
+type SecretTemplateValueProvider interface {
+	TemplateValues(ctx context.Context) (map[string]string, error)
+}
 
 type ExecutionStore interface {
 	Create(ctx context.Context, e *models.Execution) error
@@ -54,15 +62,37 @@ type ExecutionRunner struct {
 	engine      *Engine
 	broadcaster ExecutionBroadcaster
 	active      *activeExecutionTracker
+	validator   FlowSemanticValidator
+	secrets     SecretTemplateValueProvider
 }
 
-func NewExecutionRunner(store ExecutionStore, engine *Engine, broadcaster ExecutionBroadcaster) *ExecutionRunner {
-	return &ExecutionRunner{
+type ExecutionRunnerOption func(*ExecutionRunner)
+
+func WithFlowSemanticValidator(validator FlowSemanticValidator) ExecutionRunnerOption {
+	return func(r *ExecutionRunner) {
+		r.validator = validator
+	}
+}
+
+func WithSecretTemplateValueProvider(provider SecretTemplateValueProvider) ExecutionRunnerOption {
+	return func(r *ExecutionRunner) {
+		r.secrets = provider
+	}
+}
+
+func NewExecutionRunner(store ExecutionStore, engine *Engine, broadcaster ExecutionBroadcaster, opts ...ExecutionRunnerOption) *ExecutionRunner {
+	runner := &ExecutionRunner{
 		store:       store,
 		engine:      engine,
 		broadcaster: broadcaster,
 		active:      newActiveExecutionTracker(),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(runner)
+		}
+	}
+	return runner
 }
 
 func (r *ExecutionRunner) Run(
@@ -78,6 +108,22 @@ func (r *ExecutionRunner) Run(
 	if r.engine == nil {
 		return nil, fmt.Errorf("execution engine is not configured")
 	}
+	if r.validator != nil {
+		if err := r.validator.ValidateFlowData(ctx, flowData, false); err != nil {
+			return nil, err
+		}
+	}
+
+	persistedContext := copyExecutionContext(executionContext)
+	runtimeContext := copyExecutionContext(executionContext)
+	delete(persistedContext, "secret")
+	if r.secrets != nil {
+		secretValues, err := r.secrets.TemplateValues(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("load secret template values: %w", err)
+		}
+		runtimeContext["secret"] = secretValues
+	}
 
 	execution := &models.Execution{
 		PipelineID:  pipelineID,
@@ -85,8 +131,8 @@ func (r *ExecutionRunner) Run(
 		Status:      "running",
 	}
 
-	if len(executionContext) > 0 {
-		if payload, err := json.Marshal(executionContext); err == nil {
+	if len(persistedContext) > 0 {
+		if payload, err := json.Marshal(persistedContext); err == nil {
 			serialized := string(payload)
 			execution.Context = &serialized
 		}
@@ -156,7 +202,7 @@ func (r *ExecutionRunner) Run(
 		},
 	}
 
-	state, execErr := r.engine.ExecuteWithInput(WithPipelineCall(runCtx, pipelineID), flowData, triggerType, executionContext, observer)
+	state, execErr := r.engine.ExecuteWithInput(WithPipelineCall(runCtx, pipelineID), flowData, triggerType, runtimeContext, observer)
 	completedAt := time.Now()
 
 	status := "completed"

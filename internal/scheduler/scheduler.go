@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/pipeline"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/pipeline"
 )
 
 type PipelineRunner func(ctx context.Context, pipelineID string) error

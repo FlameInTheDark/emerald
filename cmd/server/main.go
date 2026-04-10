@@ -9,24 +9,26 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/FlameInTheDark/automator/internal/api"
-	"github.com/FlameInTheDark/automator/internal/auth"
-	"github.com/FlameInTheDark/automator/internal/channels"
-	"github.com/FlameInTheDark/automator/internal/config"
-	"github.com/FlameInTheDark/automator/internal/crypto"
-	"github.com/FlameInTheDark/automator/internal/db"
-	"github.com/FlameInTheDark/automator/internal/db/query"
-	"github.com/FlameInTheDark/automator/internal/node"
-	"github.com/FlameInTheDark/automator/internal/node/action"
-	"github.com/FlameInTheDark/automator/internal/node/logic"
-	"github.com/FlameInTheDark/automator/internal/node/lua"
-	"github.com/FlameInTheDark/automator/internal/node/trigger"
-	"github.com/FlameInTheDark/automator/internal/pipeline"
-	"github.com/FlameInTheDark/automator/internal/pipelineops"
-	"github.com/FlameInTheDark/automator/internal/scheduler"
-	"github.com/FlameInTheDark/automator/internal/shellcmd"
-	"github.com/FlameInTheDark/automator/internal/skills"
-	"github.com/FlameInTheDark/automator/internal/ws"
+	"github.com/FlameInTheDark/emerald/internal/api"
+	"github.com/FlameInTheDark/emerald/internal/auth"
+	"github.com/FlameInTheDark/emerald/internal/channels"
+	"github.com/FlameInTheDark/emerald/internal/config"
+	"github.com/FlameInTheDark/emerald/internal/crypto"
+	"github.com/FlameInTheDark/emerald/internal/db"
+	"github.com/FlameInTheDark/emerald/internal/db/query"
+	"github.com/FlameInTheDark/emerald/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/node/action"
+	"github.com/FlameInTheDark/emerald/internal/node/logic"
+	"github.com/FlameInTheDark/emerald/internal/node/lua"
+	"github.com/FlameInTheDark/emerald/internal/node/trigger"
+	"github.com/FlameInTheDark/emerald/internal/nodedefs"
+	"github.com/FlameInTheDark/emerald/internal/pipeline"
+	"github.com/FlameInTheDark/emerald/internal/pipelineops"
+	"github.com/FlameInTheDark/emerald/internal/plugins"
+	"github.com/FlameInTheDark/emerald/internal/scheduler"
+	"github.com/FlameInTheDark/emerald/internal/shellcmd"
+	"github.com/FlameInTheDark/emerald/internal/skills"
+	"github.com/FlameInTheDark/emerald/internal/ws"
 )
 
 func main() {
@@ -66,6 +68,7 @@ func main() {
 	channelStore := query.NewChannelStore(database.DB, encryptor)
 	channelContactStore := query.NewChannelContactStore(database.DB)
 	userStore := query.NewUserStore(database.DB, encryptor)
+	secretStore := query.NewSecretStore(database.DB, encryptor)
 	pipelineStore := query.NewPipelineStore(database.DB)
 	executionStore := query.NewExecutionStore(database.DB)
 	if err := userStore.EnsureDefaultUser(context.Background(), cfg.Auth.Username, cfg.Auth.Password); err != nil {
@@ -92,6 +95,21 @@ func main() {
 		log.Printf("failed to seed bundled skills: %v", err)
 	}
 	log.Printf("loading local skills from %s", skillsDir)
+
+	pluginsDir, err := plugins.ResolveDirectory(os.Getenv("AUTOMATOR_PLUGINS_DIR"), workingDir, executablePath)
+	if err != nil {
+		log.Printf("failed to resolve plugins directory: %v", err)
+		pluginsDir = filepath.Join(workingDir, ".agents", "plugins")
+	}
+	log.Printf("loading local plugins from %s", pluginsDir)
+
+	pluginManager := plugins.NewManager(pluginsDir)
+	if err := pluginManager.Refresh(context.Background()); err != nil {
+		log.Printf("failed to load plugins: %v", err)
+	}
+	defer pluginManager.Stop()
+
+	nodeDefinitionService := nodedefs.NewService(pluginManager)
 
 	skillStore := skills.NewStore(skillsDir, 2*time.Second)
 	if err := skillStore.Start(context.Background()); err != nil {
@@ -208,7 +226,13 @@ func main() {
 	engine = pipeline.NewEngine(registry)
 	wsHub := ws.NewHub()
 	go wsHub.Run()
-	executionRunner = pipeline.NewExecutionRunner(executionStore, engine, wsHub)
+	executionRunner = pipeline.NewExecutionRunner(
+		executionStore,
+		engine,
+		wsHub,
+		pipeline.WithFlowSemanticValidator(nodeDefinitionService),
+		pipeline.WithSecretTemplateValueProvider(secretStore),
+	)
 	pipelineInvoker := pipeline.NewInvoker(database.DB, pipelineStore, engine, executionRunner)
 	pipelineRunner := func(ctx context.Context, pipelineID string) error {
 		flowData, err := scheduler.LoadFlowData(database.DB, pipelineID)
@@ -225,7 +249,7 @@ func main() {
 		return nil
 	}
 	cronScheduler := scheduler.New(database.DB, pipelineRunner)
-	pipelineManager := pipelineops.NewService(pipelineStore, cronScheduler)
+	pipelineManager := pipelineops.NewService(pipelineStore, cronScheduler, nodeDefinitionService)
 	registry.Register(node.TypeToolListNodes, &action.ListNodesToolNode{Clusters: clusterStore})
 	registry.Register(node.TypeToolListVMsCTs, &action.ListVMsCTsToolNode{Clusters: clusterStore})
 	registry.Register(node.TypeToolVMStart, &action.VMStartToolNode{Clusters: clusterStore})
@@ -261,6 +285,23 @@ func main() {
 		Pipelines: pipelineStore,
 		Runner:    pipelineInvoker,
 	})
+	for _, binding := range pluginManager.Bindings() {
+		nodeType := node.NodeType(binding.Type)
+		switch binding.Kind {
+		case "tool":
+			registry.Register(nodeType, &plugins.ToolExecutor{
+				Manager:  pluginManager,
+				NodeType: binding.Type,
+			})
+		default:
+			registry.Register(nodeType, &plugins.ActionExecutor{
+				Manager:  pluginManager,
+				NodeType: binding.Type,
+				Outputs:  binding.Spec.Outputs,
+			})
+		}
+	}
+
 	cronScheduler.Start()
 	defer cronScheduler.Stop()
 
@@ -284,6 +325,8 @@ func main() {
 		SkillStore:      skillStore,
 		ShellRunner:     shellRunner,
 		AuthService:     authService,
+		NodeDefinitions: nodeDefinitionService,
+		SecretStore:     secretStore,
 	})
 
 	go func() {

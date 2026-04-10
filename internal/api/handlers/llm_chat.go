@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 
-	"github.com/FlameInTheDark/automator/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/llm"
 )
 
 const maxToolChatRounds = llm.DefaultMaxToolChatRounds

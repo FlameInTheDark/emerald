@@ -165,7 +165,7 @@ export default function KubernetesNodeConfigSection({
           </div>
           <div>
             <Label>Field Manager</Label>
-            <Input value={(localConfig.fieldManager as string) || ''} onChange={(e) => onConfigChange('fieldManager', e.target.value)} placeholder="automator" />
+            <Input value={(localConfig.fieldManager as string) || ''} onChange={(e) => onConfigChange('fieldManager', e.target.value)} placeholder="emerald" />
           </div>
           <label className="flex items-start gap-3 rounded-lg border border-border bg-bg-input px-3 py-2">
             <Checkbox checked={Boolean(localConfig.force)} onChange={(e) => onConfigChange('force', e.target.checked)} className="mt-0.5" />

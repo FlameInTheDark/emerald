@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/node"
 )
 
 type blockingExecutor struct {
@@ -51,6 +52,23 @@ func (e *runnerPassthroughExecutor) Execute(_ context.Context, _ json.RawMessage
 
 func (e *runnerPassthroughExecutor) Validate(json.RawMessage) error {
 	return nil
+}
+
+type staticSecretProvider struct {
+	values map[string]string
+	err    error
+}
+
+func (p staticSecretProvider) TemplateValues(context.Context) (map[string]string, error) {
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	result := make(map[string]string, len(p.values))
+	for key, value := range p.values {
+		result[key] = value
+	}
+	return result, nil
 }
 
 type testExecutionStore struct {
@@ -335,6 +353,77 @@ func TestExecutionRunner_ContinuedNodeErrorKeepsExecutionCompleted(t *testing.T)
 	}
 	if got := output["errorNodeId"]; got != "fail" {
 		t.Fatalf("output.errorNodeId = %#v, want fail", got)
+	}
+	if got := output["requestId"]; got != "req-1" {
+		t.Fatalf("output.requestId = %#v, want req-1", got)
+	}
+}
+
+func TestExecutionRunner_RuntimeSecretsOverrideReservedContextWithoutPersistingValues(t *testing.T) {
+	t.Parallel()
+
+	registry := node.NewRegistry()
+	registry.Register("test:next", &runnerPassthroughExecutor{})
+
+	engine := NewEngine(registry)
+	store := newTestExecutionStore()
+	runner := NewExecutionRunner(
+		store,
+		engine,
+		nil,
+		WithSecretTemplateValueProvider(staticSecretProvider{
+			values: map[string]string{
+				"db_password": "vault-secret",
+			},
+		}),
+	)
+
+	flowData := FlowData{
+		Nodes: []FlowNode{
+			{ID: "next", Type: "test:next"},
+		},
+	}
+
+	result, err := runner.Run(context.Background(), "pipeline-1", flowData, "manual", map[string]any{
+		"requestId": "req-1",
+		"secret": map[string]any{
+			"db_password": "user-supplied",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	execution := store.executions[result.ExecutionID]
+	if execution == nil {
+		t.Fatal("expected execution to be stored")
+	}
+	if execution.Context == nil {
+		t.Fatal("expected execution context to be stored")
+	}
+	if strings.Contains(*execution.Context, "vault-secret") {
+		t.Fatalf("expected persisted execution context to omit injected secrets, got %s", *execution.Context)
+	}
+	if strings.Contains(*execution.Context, `"secret"`) {
+		t.Fatalf("expected reserved secret key to be omitted from persisted execution context, got %s", *execution.Context)
+	}
+
+	nodeExecution := store.nodeExecutions["node-next"]
+	if nodeExecution == nil || nodeExecution.Output == nil {
+		t.Fatalf("expected node output to be stored, got %#v", nodeExecution)
+	}
+
+	var output map[string]any
+	if err := json.Unmarshal([]byte(*nodeExecution.Output), &output); err != nil {
+		t.Fatalf("unmarshal node output: %v", err)
+	}
+
+	secretPayload, ok := output["secret"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected output.secret map, got %#v", output["secret"])
+	}
+	if got := secretPayload["db_password"]; got != "vault-secret" {
+		t.Fatalf("output.secret.db_password = %#v, want vault-secret", got)
 	}
 	if got := output["requestId"]; got != "req-1" {
 		t.Fatalf("output.requestId = %#v, want req-1", got)

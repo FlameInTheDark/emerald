@@ -11,7 +11,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/llm"
 )
 
 type llmChatStreamEvent struct {

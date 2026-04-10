@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
 	sq "github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 )

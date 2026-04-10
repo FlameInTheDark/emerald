@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Server, Shield, Brain, Bot, Plus, Trash2, Edit2, MessageSquare, Power, Users } from 'lucide-react'
+import { Server, Shield, Brain, Bot, Plus, Trash2, Edit2, MessageSquare, Power, Users, Lock } from 'lucide-react'
 import { api } from '../api/client'
 import { Card, CardContent } from '../components/ui/Card'
 import Button from '../components/ui/Button'
@@ -11,10 +11,11 @@ import Skeleton from '../components/ui/Skeleton'
 import KubernetesClusterSettings from '../components/Settings/KubernetesClusterSettings'
 import AssistantProfilesSettings from '../components/Settings/AssistantProfilesSettings'
 import ProviderModelSelector from '../components/Settings/ProviderModelSelector'
+import { useNodeDefinitions } from '../hooks/useNodeDefinitions'
 import { useUIStore } from '../store/ui'
 import { cn } from '../lib/utils'
 import { AUTH_SESSION_QUERY_KEY, useAuthSession } from '../lib/auth'
-import type { AuthSession, Channel, Cluster, LLMProvider, User } from '../types'
+import type { AuthSession, Channel, Cluster, LLMProvider, SecretMetadata, User } from '../types'
 
 type ClusterFormState = {
   name: string
@@ -45,6 +46,12 @@ type ChannelFormState = {
 type UserFormState = {
   username: string
   password: string
+}
+
+type SecretFormState = {
+  name: string
+  value: string
+  replaceValue: boolean
 }
 
 type PasswordChangeFormState = {
@@ -116,6 +123,14 @@ function getDefaultUserForm(): UserFormState {
   }
 }
 
+function getDefaultSecretForm(): SecretFormState {
+  return {
+    name: '',
+    value: '',
+    replaceValue: true,
+  }
+}
+
 function getDefaultPasswordChangeForm(): PasswordChangeFormState {
   return {
     current_password: '',
@@ -175,7 +190,7 @@ function channelToForm(channel: Channel): ChannelFormState {
 }
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<'clusters' | 'kubernetes' | 'channels' | 'ai' | 'users'>('clusters')
+  const [activeTab, setActiveTab] = useState<'clusters' | 'kubernetes' | 'channels' | 'ai' | 'secrets' | 'users'>('clusters')
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -191,6 +206,7 @@ export default function Settings() {
             { id: 'kubernetes' as const, label: 'Kubernetes Clusters', icon: Shield },
             { id: 'channels' as const, label: 'Channels', icon: MessageSquare },
             { id: 'ai' as const, label: 'AI', icon: Brain },
+            { id: 'secrets' as const, label: 'Secrets', icon: Lock },
             { id: 'users' as const, label: 'Users', icon: Users },
           ].map(({ id, label, icon: Icon }) => (
             <button
@@ -214,6 +230,7 @@ export default function Settings() {
       {activeTab === 'kubernetes' && <KubernetesClusterSettings />}
       {activeTab === 'channels' && <ChannelSettings />}
       {activeTab === 'ai' && <AISettings />}
+      {activeTab === 'secrets' && <SecretsSettings />}
       {activeTab === 'users' && <UserSettings />}
     </div>
   )
@@ -256,6 +273,337 @@ function AISettings() {
       </div>
 
       {activeTab === 'providers' ? <LLMSettings /> : <AssistantProfilesSettings />}
+    </div>
+  )
+}
+
+function SecretsSettings() {
+  const queryClient = useQueryClient()
+  const { addToast } = useUIStore()
+  const { plugins, isLoading: arePluginsLoading } = useNodeDefinitions()
+  const [showForm, setShowForm] = useState(false)
+  const [editingSecretId, setEditingSecretId] = useState<string | null>(null)
+  const [loadingSecretId, setLoadingSecretId] = useState<string | null>(null)
+  const [form, setForm] = useState<SecretFormState>(getDefaultSecretForm())
+
+  const { data: secrets, isLoading } = useQuery<SecretMetadata[]>({
+    queryKey: ['secrets'],
+    queryFn: () => api.secrets.list(),
+  })
+
+  const createMutation = useMutation({
+    mutationFn: () => api.secrets.create({
+      name: form.name.trim(),
+      value: form.value,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['secrets'] })
+      resetForm()
+      addToast({ type: 'success', title: 'Secret created' })
+    },
+    onError: (err) => {
+      addToast({ type: 'error', title: 'Failed to create secret', message: err.message })
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: () => api.secrets.update(editingSecretId!, {
+      name: form.name.trim(),
+      ...(form.replaceValue ? { value: form.value } : {}),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['secrets'] })
+      resetForm()
+      addToast({ type: 'success', title: 'Secret updated' })
+    },
+    onError: (err) => {
+      addToast({ type: 'error', title: 'Failed to update secret', message: err.message })
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.secrets.delete(id),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['secrets'] })
+      addToast({ type: 'success', title: 'Secret deleted' })
+      if (editingSecretId === id) {
+        resetForm()
+      }
+    },
+    onError: (err) => {
+      addToast({ type: 'error', title: 'Failed to delete secret', message: err.message })
+    },
+  })
+
+  function resetForm() {
+    setShowForm(false)
+    setEditingSecretId(null)
+    setLoadingSecretId(null)
+    setForm(getDefaultSecretForm())
+  }
+
+  function startCreate() {
+    setEditingSecretId(null)
+    setForm(getDefaultSecretForm())
+    setShowForm(true)
+  }
+
+  async function startEdit(id: string) {
+    setLoadingSecretId(id)
+    try {
+      const secret = await api.secrets.get(id)
+      setEditingSecretId(id)
+      setForm({
+        name: secret.name,
+        value: '',
+        replaceValue: false,
+      })
+      setShowForm(true)
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Failed to load secret',
+        message: err instanceof Error ? err.message : 'Unknown error',
+      })
+    } finally {
+      setLoadingSecretId(null)
+    }
+  }
+
+  function handleSubmit(event: React.FormEvent) {
+    event.preventDefault()
+
+    const trimmedName = form.name.trim()
+    if (!trimmedName) {
+      addToast({ type: 'warning', title: 'Secret name is required' })
+      return
+    }
+
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmedName)) {
+      addToast({
+        type: 'warning',
+        title: 'Invalid secret name',
+        message: 'Use letters, numbers, and underscores only, and start with a letter or underscore.',
+      })
+      return
+    }
+
+    if (!editingSecretId && form.value === '') {
+      addToast({ type: 'warning', title: 'Secret value is required' })
+      return
+    }
+
+    if (editingSecretId && form.replaceValue && form.value === '') {
+      addToast({
+        type: 'warning',
+        title: 'Enter a new value',
+        message: 'Disable value replacement if you only want to rename the secret.',
+      })
+      return
+    }
+
+    if (editingSecretId) {
+      updateMutation.mutate()
+      return
+    }
+
+    createMutation.mutate()
+  }
+
+  const isSubmitting = createMutation.isPending || updateMutation.isPending
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-text">Secrets</h2>
+          <p className="mt-1 text-sm text-text-muted">
+            Store encrypted values once and reference them anywhere templating works with <code>{'{{secret.name}}'}</code>.
+          </p>
+        </div>
+        <Button onClick={showForm ? resetForm : startCreate}>
+          <Plus className="w-4 h-4" />
+          {showForm ? 'Close' : 'Add Secret'}
+        </Button>
+      </div>
+
+      <Card>
+        <CardContent className="space-y-4 pt-6">
+          <div>
+            <h3 className="text-base font-semibold text-text">Secret Vault</h3>
+            <p className="mt-1 text-sm text-text-muted">
+              Secret values are write-only in the API. Emerald only exposes metadata after a secret is saved.
+            </p>
+          </div>
+
+          {showForm && (
+            <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border border-border bg-bg-overlay/50 p-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label>Secret Name</Label>
+                  <Input
+                    value={form.name}
+                    onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="db_password"
+                    required
+                  />
+                  <p className="mt-1 text-xs text-text-dimmed">
+                    Use letters, numbers, and underscores so the secret can be referenced as <code>{'{{secret.db_password}}'}</code>.
+                  </p>
+                </div>
+                <div>
+                  <Label>Template Reference</Label>
+                  <div className="rounded-lg border border-border bg-bg-input px-3 py-2 text-sm text-text-muted">
+                    <code>{form.name.trim() ? `{{secret.${form.name.trim()}}}` : '{{secret.name}}'}</code>
+                  </div>
+                </div>
+              </div>
+
+              {editingSecretId && (
+                <div className="rounded-lg border border-border bg-bg-input/60 px-3 py-3">
+                  <label className="flex items-center gap-2 text-sm font-medium text-text">
+                    <Checkbox
+                      checked={form.replaceValue}
+                      onChange={(event) => setForm((current) => ({ ...current, replaceValue: event.target.checked }))}
+                    />
+                    <span>Replace stored value</span>
+                  </label>
+                  <p className="mt-2 text-xs text-text-dimmed">
+                    Leave this off if you only want to rename the secret without rotating the underlying credential.
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <Label>{editingSecretId ? 'New Value' : 'Secret Value'}</Label>
+                <Input
+                  type="password"
+                  value={form.value}
+                  onChange={(event) => setForm((current) => ({ ...current, value: event.target.value }))}
+                  placeholder={editingSecretId ? 'Enter a new value to rotate this secret' : 'Paste the encrypted value source here'}
+                  disabled={editingSecretId ? !form.replaceValue : false}
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <Button type="submit" loading={isSubmitting}>
+                  {editingSecretId ? 'Save Secret' : 'Create Secret'}
+                </Button>
+                <Button type="button" variant="secondary" onClick={resetForm}>
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          )}
+
+          <div className="space-y-3">
+            {isLoading && (
+              <>
+                <Skeleton className="h-24 w-full" />
+                <Skeleton className="h-24 w-full" />
+              </>
+            )}
+
+            {!isLoading && (!secrets || secrets.length === 0) && (
+              <div className="rounded-xl border border-dashed border-border px-4 py-6 text-sm text-text-muted">
+                No secrets yet. Add one here, then reference it from node fields with <code>{'{{secret.name}}'}</code>.
+              </div>
+            )}
+
+            {!isLoading && secrets?.map((secret) => (
+              <div
+                key={secret.id}
+                className="flex flex-col gap-4 rounded-xl border border-border bg-bg-overlay/40 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="truncate text-base font-semibold text-text">{secret.name}</h4>
+                    <Badge variant="info">Encrypted</Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-text-muted">
+                    Reference with <code>{`{{secret.${secret.name}}}`}</code>
+                  </p>
+                  <p className="mt-1 text-xs text-text-dimmed">
+                    Updated {new Date(secret.updated_at).toLocaleString()}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => startEdit(secret.id)}
+                    loading={loadingSecretId === secret.id}
+                  >
+                    <Edit2 className="w-4 h-4" />
+                    Edit
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={() => deleteMutation.mutate(secret.id)}
+                    disabled={deleteMutation.isPending}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="space-y-4 pt-6">
+          <div>
+            <h3 className="text-base font-semibold text-text">Installed Plugin Bundles</h3>
+            <p className="mt-1 text-sm text-text-muted">
+              Emerald discovers local plugin bundles and surfaces their health here so missing or broken nodes are easier to spot.
+            </p>
+          </div>
+
+          {arePluginsLoading && (
+            <>
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+            </>
+          )}
+
+          {!arePluginsLoading && plugins.length === 0 && (
+            <div className="rounded-xl border border-dashed border-border px-4 py-6 text-sm text-text-muted">
+              No plugin bundles discovered yet. Add bundles under <code>.agents/plugins</code> or configure <code>AUTOMATOR_PLUGINS_DIR</code>.
+            </div>
+          )}
+
+          {!arePluginsLoading && plugins.map((plugin) => (
+            <div
+              key={plugin.id}
+              className="rounded-xl border border-border bg-bg-overlay/40 px-4 py-4"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="truncate text-base font-semibold text-text">{plugin.name}</h4>
+                    {plugin.version && <Badge variant="default">v{plugin.version}</Badge>}
+                    <Badge variant={plugin.healthy ? 'success' : 'error'}>
+                      {plugin.healthy ? 'Healthy' : 'Unavailable'}
+                    </Badge>
+                  </div>
+                  {plugin.description && (
+                    <p className="mt-1 text-sm text-text-muted">{plugin.description}</p>
+                  )}
+                  <p className="mt-1 text-xs text-text-dimmed">
+                    {plugin.node_count} node{plugin.node_count === 1 ? '' : 's'} from {plugin.path}
+                  </p>
+                </div>
+                {plugin.error && (
+                  <div className="max-w-xl rounded-lg border border-red-600/30 bg-red-600/10 px-3 py-2 text-sm text-red-300">
+                    {plugin.error}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -652,7 +1000,7 @@ function ClusterSettings() {
                   <Input
                     value={form.api_token_id}
                     onChange={(e) => setForm({ ...form, api_token_id: e.target.value })}
-                    placeholder="root@pam!automator"
+                    placeholder="root@pam!emerald"
                     required
                   />
                 </div>

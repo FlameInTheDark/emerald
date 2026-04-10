@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/llm"
-	"github.com/FlameInTheDark/automator/internal/node"
-	"github.com/FlameInTheDark/automator/internal/templating"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/templating"
 	"github.com/expr-lang/expr"
 )
 

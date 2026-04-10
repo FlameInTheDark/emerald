@@ -7,7 +7,7 @@ import { usePipelineDraftHistory, type PipelineDraftState } from './usePipelineD
 function createNode(label: string, selected = false): Node {
   return {
     id: 'node-1',
-    type: 'automator',
+    type: 'emerald',
     position: { x: 0, y: 0 },
     selected,
     data: {

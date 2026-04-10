@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/FlameInTheDark/automator/internal/node/trigger"
+	"github.com/FlameInTheDark/emerald/internal/node/trigger"
 )
 
 func ParseFlowData(nodesJSON string, edgesJSON string) (*FlowData, error) {

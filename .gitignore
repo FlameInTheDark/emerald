@@ -34,3 +34,4 @@ tmp/
 .DS_Store
 Thumbs.db
 /web/src/assets/illustrations/
+/.agents/plugins/

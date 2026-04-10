@@ -8,8 +8,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	iauth "github.com/FlameInTheDark/automator/internal/auth"
-	"github.com/FlameInTheDark/automator/internal/db/models"
+	iauth "github.com/FlameInTheDark/emerald/internal/auth"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
 )
 
 type stubUserStore struct {

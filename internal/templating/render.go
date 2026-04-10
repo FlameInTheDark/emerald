@@ -73,6 +73,30 @@ func RenderStrings(target any, input map[string]any) error {
 	return renderValue(value.Elem(), input)
 }
 
+// RenderJSON renders template placeholders across arbitrary JSON-compatible
+// payloads and re-encodes the rendered value back into canonical JSON.
+func RenderJSON(payload json.RawMessage, input map[string]any) (json.RawMessage, error) {
+	if len(payload) == 0 {
+		return json.RawMessage("{}"), nil
+	}
+
+	var value any
+	if err := json.Unmarshal(payload, &value); err != nil {
+		return nil, fmt.Errorf("decode json payload: %w", err)
+	}
+
+	if err := RenderStrings(&value, input); err != nil {
+		return nil, err
+	}
+
+	rendered, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode json payload: %w", err)
+	}
+
+	return rendered, nil
+}
+
 func renderValue(value reflect.Value, input map[string]any) error {
 	if !value.IsValid() {
 		return nil

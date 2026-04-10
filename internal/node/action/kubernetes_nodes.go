@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	ik8s "github.com/FlameInTheDark/automator/internal/kubernetes"
-	"github.com/FlameInTheDark/automator/internal/llm"
-	"github.com/FlameInTheDark/automator/internal/node"
-	"github.com/FlameInTheDark/automator/internal/templating"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	ik8s "github.com/FlameInTheDark/emerald/internal/kubernetes"
+	"github.com/FlameInTheDark/emerald/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/templating"
 )
 
 type KubernetesClusterStore interface {

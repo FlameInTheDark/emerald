@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FlameInTheDark/automator/internal/db/query"
+	"github.com/FlameInTheDark/emerald/internal/db/query"
 )
 
 type Scope string

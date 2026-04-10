@@ -35,7 +35,7 @@ func TestClient_UsesEqualsInTokenAuthorizationHeader(t *testing.T) {
 	client := NewClient(ClientConfig{
 		Host:          host,
 		Port:          port,
-		TokenID:       "root@pam!automator",
+		TokenID:       "root@pam!emerald",
 		TokenSecret:   "secret-value",
 		SkipTLSVerify: true,
 	})
@@ -45,7 +45,7 @@ func TestClient_UsesEqualsInTokenAuthorizationHeader(t *testing.T) {
 		t.Fatalf("ListNodes() error = %v", err)
 	}
 
-	want := "PVEAPIToken=root@pam!automator=secret-value"
+	want := "PVEAPIToken=root@pam!emerald=secret-value"
 	if gotAuth != want {
 		t.Fatalf("Authorization header = %q, want %q", gotAuth, want)
 	}

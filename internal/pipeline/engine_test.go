@@ -6,9 +6,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/FlameInTheDark/automator/internal/node"
-	"github.com/FlameInTheDark/automator/internal/node/logic"
-	"github.com/FlameInTheDark/automator/internal/pipeline"
+	"github.com/FlameInTheDark/emerald/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/node/logic"
+	"github.com/FlameInTheDark/emerald/internal/pipeline"
 )
 
 type testExecutor struct {

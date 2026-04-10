@@ -119,7 +119,7 @@ func (s *Session) ApplyManifest(ctx context.Context, opts ApplyOptions) ([]map[s
 
 	fieldManager := strings.TrimSpace(opts.FieldManager)
 	if fieldManager == "" {
-		fieldManager = "automator"
+		fieldManager = "emerald"
 	}
 
 	decoder := k8syaml.NewYAMLOrJSONDecoder(strings.NewReader(manifest), 4096)

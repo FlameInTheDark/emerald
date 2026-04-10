@@ -1,22 +1,33 @@
 package handlers
 
 import (
+	"context"
+
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/db/query"
-	"github.com/FlameInTheDark/automator/internal/pipelineops"
-	"github.com/FlameInTheDark/automator/internal/scheduler"
-	"github.com/FlameInTheDark/automator/internal/templateops"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/query"
+	"github.com/FlameInTheDark/emerald/internal/pipelineops"
+	"github.com/FlameInTheDark/emerald/internal/scheduler"
+	"github.com/FlameInTheDark/emerald/internal/templateops"
 )
 
 type PipelineHandler struct {
 	store     *query.PipelineStore
 	scheduler *scheduler.Scheduler
+	validator definitionValidator
 }
 
-func NewPipelineHandler(store *query.PipelineStore, scheduler *scheduler.Scheduler) *PipelineHandler {
-	return &PipelineHandler{store: store, scheduler: scheduler}
+type definitionValidator interface {
+	ValidateDefinition(ctx context.Context, nodesJSON string, edgesJSON string, allowUnavailablePlugins bool) error
+}
+
+func NewPipelineHandler(store *query.PipelineStore, scheduler *scheduler.Scheduler, validators ...definitionValidator) *PipelineHandler {
+	handler := &PipelineHandler{store: store, scheduler: scheduler}
+	if len(validators) > 0 {
+		handler.validator = validators[0]
+	}
+	return handler
 }
 
 func (h *PipelineHandler) List(c *fiber.Ctx) error {
@@ -36,6 +47,8 @@ func (h *PipelineHandler) List(c *fiber.Ctx) error {
 }
 
 func (h *PipelineHandler) Create(c *fiber.Ctx) error {
+	ctx := c.Context()
+
 	var req models.Pipeline
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -52,13 +65,12 @@ func (h *PipelineHandler) Create(c *fiber.Ctx) error {
 	if req.Status == "" {
 		req.Status = "draft"
 	}
-	if err := validatePipelineDefinition(req.Nodes, req.Edges); err != nil {
+	if err := h.validatePipelineDefinition(ctx, req.Nodes, req.Edges, req.Status != pipelineops.StatusActive); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
 
-	ctx := c.Context()
 	if err := h.store.Create(ctx, &req); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
@@ -122,7 +134,7 @@ func (h *PipelineHandler) Update(c *fiber.Ctx) error {
 	if req.Status == "" {
 		req.Status = existing.Status
 	}
-	if err := validatePipelineDefinition(req.Nodes, req.Edges); err != nil {
+	if err := h.validatePipelineDefinition(ctx, req.Nodes, req.Edges, req.Status != pipelineops.StatusActive); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": err.Error(),
 		})
@@ -141,8 +153,14 @@ func (h *PipelineHandler) Update(c *fiber.Ctx) error {
 	return c.JSON(req)
 }
 
-func validatePipelineDefinition(nodesJSON string, edgesJSON string) error {
-	return pipelineops.ValidateDefinition(nodesJSON, edgesJSON)
+func (h *PipelineHandler) validatePipelineDefinition(ctx context.Context, nodesJSON string, edgesJSON string, allowUnavailablePlugins bool) error {
+	if err := pipelineops.ValidateDefinition(nodesJSON, edgesJSON); err != nil {
+		return err
+	}
+	if h.validator != nil {
+		return h.validator.ValidateDefinition(ctx, nodesJSON, edgesJSON, allowUnavailablePlugins)
+	}
+	return nil
 }
 
 func (h *PipelineHandler) Delete(c *fiber.Ctx) error {

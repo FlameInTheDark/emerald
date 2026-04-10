@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/FlameInTheDark/automator/internal/db"
-	"github.com/FlameInTheDark/automator/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
 )
 
 func TestChatStoreCreateListAndAppendTurn(t *testing.T) {
@@ -281,7 +281,7 @@ func TestChatStoreDeleteConversationRemovesMessages(t *testing.T) {
 func newChatStoreForTest(t *testing.T) *ChatStore {
 	t.Helper()
 
-	database, err := db.New(filepath.Join(t.TempDir(), "automator.db"))
+	database, err := db.New(filepath.Join(t.TempDir(), "emerald.db"))
 	if err != nil {
 		t.Fatalf("db.New: %v", err)
 	}

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FlameInTheDark/automator/internal/llm"
-	"github.com/FlameInTheDark/automator/internal/node"
-	"github.com/FlameInTheDark/automator/internal/shellcmd"
-	"github.com/FlameInTheDark/automator/internal/templating"
+	"github.com/FlameInTheDark/emerald/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/shellcmd"
+	"github.com/FlameInTheDark/emerald/internal/templating"
 )
 
 type ListNodesToolNode struct {

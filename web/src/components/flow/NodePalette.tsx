@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { NODE_CATEGORIES } from './nodeTypes'
 import { cn } from '../../lib/utils'
 import Input from '../ui/Input'
+import { useNodeDefinitions } from '../../hooks/useNodeDefinitions'
 import { 
   Zap, Clock, Webhook, Play, Square, Copy, Globe, Code,
   GitBranch, Split, Brain, ChevronDown, ChevronRight, Link, MessageSquare, Send, Trash2,
@@ -38,6 +38,7 @@ interface NodePaletteProps {
 }
 
 export default function NodePalette({ onDragStart, className }: NodePaletteProps) {
+  const { categories } = useNodeDefinitions()
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     trigger: true,
     action: true,
@@ -46,7 +47,7 @@ export default function NodePalette({ onDragStart, className }: NodePaletteProps
 
   const normalizedQuery = searchQuery.trim().toLowerCase()
   const filteredCategories = useMemo(
-    () => NODE_CATEGORIES
+    () => categories
       .map((category) => ({
         ...category,
         types: category.types.filter((nodeType) => (
@@ -56,7 +57,7 @@ export default function NodePalette({ onDragStart, className }: NodePaletteProps
         )),
       }))
       .filter((category) => category.types.length > 0),
-    [normalizedQuery],
+    [categories, normalizedQuery],
   )
 
   const toggleCategory = (id: string) => {

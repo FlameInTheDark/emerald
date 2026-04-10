@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { NODE_TYPE_MAP, getNodeColor, getNodeLabel } from './nodeTypes'
-import type { ExecutionDetail, LLMModelInfo, NodeType, Pipeline, TemplateSuggestion } from '../../types'
+import type { ExecutionDetail, LLMModelInfo, NodeDefinitionField, NodeType, Pipeline, TemplateSuggestion } from '../../types'
 import { api } from '../../api/client'
 import Input from '../ui/Input'
 import { Checkbox, Label } from '../ui/Form'
@@ -19,6 +19,7 @@ import { buildPromptInsertSuggestions, buildTemplateSuggestions } from '../../li
 import LuaEditorModal from './LuaEditorModal'
 import HelpTooltip from '../ui/HelpTooltip'
 import KubernetesNodeConfigSection, { kubernetesNodeTypes } from './KubernetesNodeConfigSection'
+import { useNodeDefinitions } from '../../hooks/useNodeDefinitions'
 
 const iconMap: Record<string, React.ElementType> = {
   zap: Zap,
@@ -316,6 +317,24 @@ function normalizeAggregateIDOverrides(value: unknown): Record<string, string> {
   }, {})
 }
 
+function defaultPluginFieldValue(field: NodeDefinitionField): unknown {
+  switch (field.type) {
+    case 'boolean':
+      return field.default_bool_value ?? false
+    case 'number':
+      return field.default_number_value ?? 0
+    default:
+      return field.default_string_value ?? ''
+  }
+}
+
+function pluginFieldValue(field: NodeDefinitionField, config: Record<string, unknown>): unknown {
+  if (Object.prototype.hasOwnProperty.call(config, field.name)) {
+    return config[field.name]
+  }
+  return defaultPluginFieldValue(field)
+}
+
 export default function NodeConfigPanel({
   pipelineId,
   nodes,
@@ -335,6 +354,7 @@ export default function NodeConfigPanel({
   const [localConfig, setLocalConfig] = useState(config)
   const [isLuaEditorOpen, setIsLuaEditorOpen] = useState(false)
   const [httpHeadersJSON, setHTTPHeadersJSON] = useState(() => stringifyHeaders(config.headers))
+  const { map: nodeDefinitionMap } = useNodeDefinitions()
   const { data: clusters } = useQuery({
     queryKey: ['clusters'],
     queryFn: () => api.clusters.list(),
@@ -359,6 +379,10 @@ export default function NodeConfigPanel({
     queryKey: ['executions', pipelineId],
     queryFn: () => api.executions.listByPipeline(pipelineId),
     enabled: !!pipelineId,
+  })
+  const { data: secrets } = useQuery({
+    queryKey: ['secrets'],
+    queryFn: () => api.secrets.list(),
   })
 
   const latestExecutionId = executions?.[0]?.id
@@ -405,18 +429,18 @@ export default function NodeConfigPanel({
   }
 
   const resolvedNodeType = typeof nodeType === 'string' ? nodeType : ''
-  const nodeDef = resolvedNodeType ? NODE_TYPE_MAP[resolvedNodeType as NodeType] : undefined
+  const nodeDef = resolvedNodeType ? (nodeDefinitionMap[resolvedNodeType] || NODE_TYPE_MAP[resolvedNodeType as NodeType]) : undefined
   const Icon = iconMap[nodeDef?.icon || 'zap']
-  const color = getNodeColor(resolvedNodeType)
+  const color = nodeDef?.color || getNodeColor(resolvedNodeType)
   const showClusterSelect = proxmoxNodeTypes.has(resolvedNodeType as NodeType)
   const showKubernetesClusterSelect = kubernetesNodeTypes.has(resolvedNodeType as NodeType)
   const showChannelSelect = channelNodeTypes.has(resolvedNodeType as NodeType)
   const templateSuggestions = useMemo<TemplateSuggestion[]>(() => (
-    buildTemplateSuggestions(nodeId, nodes, edges, latestExecutionDetail?.node_executions ?? [])
-  ), [nodeId, nodes, edges, latestExecutionDetail])
+    buildTemplateSuggestions(nodeId, nodes, edges, latestExecutionDetail?.node_executions ?? [], nodeDefinitionMap, secrets || [])
+  ), [nodeDefinitionMap, nodeId, nodes, edges, latestExecutionDetail, secrets])
   const promptInsertSuggestions = useMemo<TemplateSuggestion[]>(() => (
-    buildPromptInsertSuggestions(nodeId, nodes, edges, latestExecutionDetail?.node_executions ?? [])
-  ), [nodeId, nodes, edges, latestExecutionDetail])
+    buildPromptInsertSuggestions(nodeId, nodes, edges, latestExecutionDetail?.node_executions ?? [], nodeDefinitionMap, secrets || [])
+  ), [nodeDefinitionMap, nodeId, nodes, edges, latestExecutionDetail, secrets])
   const agentTemplateSuggestions = useMemo<TemplateSuggestion[]>(() => {
     if (resolvedNodeType !== 'llm:agent' || !Boolean(localConfig.enableSkills)) {
       return promptInsertSuggestions
@@ -2046,6 +2070,113 @@ export default function NodeConfigPanel({
                   </div>
                 </div>
               </>
+            ) : resolvedNodeType.startsWith('action:plugin/') || resolvedNodeType.startsWith('tool:plugin/') ? (
+              nodeDef ? (
+                <div className="space-y-4">
+                  {nodeDef.pluginName && (
+                    <div className="rounded-lg border border-border bg-bg-input px-3 py-2 text-xs text-text-dimmed">
+                      Plugin: <span className="font-medium text-text">{nodeDef.pluginName}</span>
+                    </div>
+                  )}
+                  {(nodeDef.fields || []).length === 0 ? (
+                    <div className="rounded-lg border border-border bg-bg-input px-3 py-2 text-sm text-text-muted">
+                      This plugin node does not expose configurable fields.
+                    </div>
+                  ) : (
+                    nodeDef.fields?.map((field) => {
+                      const value = pluginFieldValue(field, localConfig)
+                      const templateEnabled = field.template_supported !== false
+                      const stringValue = typeof value === 'string' ? value : value == null ? '' : String(value)
+
+                      if (field.type === 'boolean') {
+                        return (
+                          <label key={field.name} className="flex items-start gap-3 rounded-lg border border-border bg-bg-input px-3 py-2">
+                            <Checkbox
+                              checked={Boolean(value)}
+                              onChange={(event) => handleConfigChange(field.name, event.target.checked)}
+                              className="mt-0.5"
+                            />
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-text">{field.label}</div>
+                              {field.description && <div className="mt-1 text-xs text-text-dimmed">{field.description}</div>}
+                            </div>
+                          </label>
+                        )
+                      }
+
+                      return (
+                        <div key={field.name}>
+                          <FieldLabel tooltip={field.description}>{field.label}</FieldLabel>
+                          {field.type === 'textarea' ? (
+                            <TemplateTextarea
+                              value={stringValue}
+                              onChange={(event) => handleConfigChange(field.name, event.target.value)}
+                              placeholder={field.placeholder}
+                              rows={5}
+                              suggestions={templateEnabled ? templateSuggestions : []}
+                            />
+                          ) : field.type === 'number' ? (
+                            <Input
+                              type="number"
+                              value={typeof value === 'number' ? value : Number(value) || 0}
+                              onChange={(event) => handleConfigChange(field.name, Number(event.target.value))}
+                            />
+                          ) : field.type === 'select' ? (
+                            <Select
+                              value={stringValue}
+                              onChange={(event) => handleConfigChange(field.name, event.target.value)}
+                            >
+                              {(field.options || []).map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </Select>
+                          ) : field.type === 'json' ? (
+                            <TemplateTextarea
+                              value={typeof value === 'string' ? value : JSON.stringify(value ?? {}, null, 2)}
+                              onChange={(event) => {
+                                const nextValue = event.target.value
+                                try {
+                                  handleConfigChange(field.name, JSON.parse(nextValue))
+                                } catch {
+                                  handleConfigChange(field.name, nextValue)
+                                }
+                              }}
+                              placeholder={field.placeholder || '{\n  "key": "value"\n}'}
+                              rows={6}
+                              className="font-mono text-xs"
+                              suggestions={templateEnabled ? templateSuggestions : []}
+                            />
+                          ) : templateEnabled ? (
+                            <TemplateInput
+                              value={stringValue}
+                              onChange={(event) => handleConfigChange(field.name, event.target.value)}
+                              placeholder={field.placeholder}
+                              suggestions={templateSuggestions}
+                            />
+                          ) : (
+                            <Input
+                              value={stringValue}
+                              onChange={(event) => handleConfigChange(field.name, event.target.value)}
+                              placeholder={field.placeholder}
+                            />
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                    This plugin node is currently unavailable. You can keep editing the pipeline as a draft, but activation and execution will fail until the plugin is installed again.
+                  </div>
+                  <div className="rounded-lg border border-border bg-bg-input px-3 py-2 text-xs text-text-dimmed">
+                    Node type: <span className="font-mono text-text">{resolvedNodeType}</span>
+                  </div>
+                </div>
+              )
             ) : nodeType === 'trigger:cron' ? (
               <>
                 <div>

@@ -5,9 +5,9 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/db/query"
-	"github.com/FlameInTheDark/automator/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/query"
+	"github.com/FlameInTheDark/emerald/internal/llm"
 )
 
 type LLMProviderHandler struct {

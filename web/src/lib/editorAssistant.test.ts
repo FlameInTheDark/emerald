@@ -58,7 +58,7 @@ describe('applyLivePipelineOperations', () => {
       nodes: [
         {
           id: 'a',
-          type: 'automator',
+          type: 'emerald',
           position: { x: 40, y: 80 },
           data: {
             label: 'Old label',

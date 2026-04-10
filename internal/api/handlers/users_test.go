@@ -11,11 +11,11 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/auth"
-	"github.com/FlameInTheDark/automator/internal/crypto"
-	"github.com/FlameInTheDark/automator/internal/db"
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/db/query"
+	"github.com/FlameInTheDark/emerald/internal/auth"
+	"github.com/FlameInTheDark/emerald/internal/crypto"
+	"github.com/FlameInTheDark/emerald/internal/db"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/query"
 )
 
 func TestUserHandlerChangePassword(t *testing.T) {
@@ -125,7 +125,7 @@ func TestUserHandlerChangePasswordRejectsWrongCurrentPassword(t *testing.T) {
 func newUserHandlerTestDeps(t *testing.T) (*query.UserStore, *auth.Service) {
 	t.Helper()
 
-	database, err := db.New(filepath.Join(t.TempDir(), "automator.db"))
+	database, err := db.New(filepath.Join(t.TempDir(), "emerald.db"))
 	if err != nil {
 		t.Fatalf("db.New: %v", err)
 	}

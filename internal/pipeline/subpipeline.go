@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
 )
 
 type PipelineCatalog interface {

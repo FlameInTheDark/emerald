@@ -6,7 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/templateops"
+	"github.com/FlameInTheDark/emerald/internal/templateops"
 )
 
 type TemplateHandler struct {

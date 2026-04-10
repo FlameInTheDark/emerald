@@ -7,15 +7,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/pipelineops"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/pipelineops"
 )
 
 const (
 	DocumentVersion    = "v1"
-	KindPipeline       = "automator-pipeline"
-	KindTemplate       = "automator-template"
-	KindTemplateBundle = "automator-template-bundle"
+	KindPipeline       = "emerald-pipeline"
+	KindTemplate       = "emerald-template"
+	KindTemplateBundle = "emerald-template-bundle"
+	legacyKindPipeline = "automator-pipeline"
+	legacyKindTemplate = "automator-template"
+	legacyKindBundle   = "automator-template-bundle"
 	DefaultCategory    = "custom"
 )
 
@@ -96,9 +99,14 @@ type PipelineCreator interface {
 	Create(ctx context.Context, pipeline *models.Pipeline) error
 }
 
+type DefinitionValidator interface {
+	ValidateDefinition(ctx context.Context, nodesJSON string, edgesJSON string, allowUnavailablePlugins bool) error
+}
+
 type Service struct {
 	templates TemplateStore
 	pipelines PipelineCreator
+	validator DefinitionValidator
 }
 
 type storedDefinition struct {
@@ -107,11 +115,15 @@ type storedDefinition struct {
 	Viewport *string
 }
 
-func NewService(templates TemplateStore, pipelines PipelineCreator) *Service {
-	return &Service{
+func NewService(templates TemplateStore, pipelines PipelineCreator, validators ...DefinitionValidator) *Service {
+	service := &Service{
 		templates: templates,
 		pipelines: pipelines,
 	}
+	if len(validators) > 0 {
+		service.validator = validators[0]
+	}
+	return service
 }
 
 func (s *Service) List(ctx context.Context) ([]TemplateSummary, error) {
@@ -147,7 +159,7 @@ func (s *Service) Create(ctx context.Context, input CreateTemplateInput) (*Templ
 		category = DefaultCategory
 	}
 
-	stored, err := canonicalizeDefinition(input.Definition)
+	stored, err := s.canonicalizeDefinition(ctx, input.Definition)
 	if err != nil {
 		return nil, err
 	}
@@ -304,6 +316,8 @@ func (s *Service) Import(ctx context.Context, raw []byte) (*ImportResult, error)
 
 	switch envelope.Kind {
 	case KindTemplate:
+		fallthrough
+	case legacyKindTemplate:
 		document, err := parseTemplateDocument(raw)
 		if err != nil {
 			return nil, err
@@ -330,6 +344,8 @@ func (s *Service) Import(ctx context.Context, raw []byte) (*ImportResult, error)
 			FailedCount:  0,
 		}, nil
 	case KindPipeline:
+		fallthrough
+	case legacyKindPipeline:
 		document, err := parsePipelineDocument(raw)
 		if err != nil {
 			return nil, err
@@ -356,6 +372,8 @@ func (s *Service) Import(ctx context.Context, raw []byte) (*ImportResult, error)
 			FailedCount:  0,
 		}, nil
 	case KindTemplateBundle:
+		fallthrough
+	case legacyKindBundle:
 		document, err := parseTemplateBundle(raw)
 		if err != nil {
 			return nil, err
@@ -476,7 +494,7 @@ func parseTemplateDocument(raw []byte) (*TemplateDocument, error) {
 	if err := json.Unmarshal(raw, &document); err != nil {
 		return nil, fmt.Errorf("parse template document: %w", err)
 	}
-	if document.Kind != KindTemplate {
+	if !matchesDocumentKind(document.Kind, KindTemplate, legacyKindTemplate) {
 		return nil, fmt.Errorf("expected kind %q, got %q", KindTemplate, document.Kind)
 	}
 	if document.Version != DocumentVersion {
@@ -497,7 +515,7 @@ func parsePipelineDocument(raw []byte) (*PipelineDocument, error) {
 	if err := json.Unmarshal(raw, &document); err != nil {
 		return nil, fmt.Errorf("parse pipeline document: %w", err)
 	}
-	if document.Kind != KindPipeline {
+	if !matchesDocumentKind(document.Kind, KindPipeline, legacyKindPipeline) {
 		return nil, fmt.Errorf("expected kind %q, got %q", KindPipeline, document.Kind)
 	}
 	if document.Version != DocumentVersion {
@@ -518,7 +536,7 @@ func parseTemplateBundle(raw []byte) (*TemplateBundle, error) {
 	if err := json.Unmarshal(raw, &bundle); err != nil {
 		return nil, fmt.Errorf("parse template bundle: %w", err)
 	}
-	if bundle.Kind != KindTemplateBundle {
+	if !matchesDocumentKind(bundle.Kind, KindTemplateBundle, legacyKindBundle) {
 		return nil, fmt.Errorf("expected kind %q, got %q", KindTemplateBundle, bundle.Kind)
 	}
 	if bundle.Version != DocumentVersion {
@@ -532,6 +550,11 @@ func parseTemplateBundle(raw []byte) (*TemplateBundle, error) {
 	}
 
 	return &bundle, nil
+}
+
+func matchesDocumentKind(actual string, expected string, legacy string) bool {
+	actual = strings.TrimSpace(actual)
+	return actual == expected || actual == legacy
 }
 
 func canonicalizeDefinition(input Definition) (storedDefinition, error) {
@@ -573,6 +596,19 @@ func parseStoredDefinition(raw string) (storedDefinition, error) {
 		Edges:    payload.Edges,
 		Viewport: payload.Viewport,
 	})
+}
+
+func (s *Service) canonicalizeDefinition(ctx context.Context, input Definition) (storedDefinition, error) {
+	stored, err := canonicalizeDefinition(input)
+	if err != nil {
+		return storedDefinition{}, err
+	}
+	if s.validator != nil {
+		if err := s.validator.ValidateDefinition(ctx, stored.Nodes, stored.Edges, true); err != nil {
+			return storedDefinition{}, err
+		}
+	}
+	return stored, nil
 }
 
 func (d storedDefinition) toDefinition() Definition {

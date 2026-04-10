@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
 )
 
 const (

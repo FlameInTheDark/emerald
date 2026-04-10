@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/FlameInTheDark/automator/internal/assistants"
-	"github.com/FlameInTheDark/automator/internal/skills"
+	"github.com/FlameInTheDark/emerald/internal/assistants"
+	"github.com/FlameInTheDark/emerald/internal/skills"
 )
 
 func TestEditorAssistantBuildModelMessagesIncludesModeAndContext(t *testing.T) {

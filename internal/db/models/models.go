@@ -150,6 +150,14 @@ type Template struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+type Secret struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Value     string    `json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type DashboardStats struct {
 	Clusters        int `json:"clusters"`
 	Pipelines       int `json:"pipelines"`

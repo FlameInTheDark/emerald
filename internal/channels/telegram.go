@@ -12,7 +12,7 @@ import (
 	tgbot "github.com/go-telegram/bot"
 	tgmodels "github.com/go-telegram/bot/models"
 
-	dbmodels "github.com/FlameInTheDark/automator/internal/db/models"
+	dbmodels "github.com/FlameInTheDark/emerald/internal/db/models"
 )
 
 type telegramRuntime struct {

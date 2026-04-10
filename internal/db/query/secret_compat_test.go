@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/FlameInTheDark/automator/internal/crypto"
-	"github.com/FlameInTheDark/automator/internal/db"
+	"github.com/FlameInTheDark/emerald/internal/crypto"
+	"github.com/FlameInTheDark/emerald/internal/db"
 )
 
 func TestChannelStoreLoadsLegacyPlaintextConfig(t *testing.T) {
@@ -150,7 +150,7 @@ func TestKubernetesClusterStoreLoadsLegacyPlaintextKubeconfig(t *testing.T) {
 func newCompatTestDB(t *testing.T) (*db.DB, *crypto.Encryptor) {
 	t.Helper()
 
-	database, err := db.New(filepath.Join(t.TempDir(), "automator.db"))
+	database, err := db.New(filepath.Join(t.TempDir(), "emerald.db"))
 	if err != nil {
 		t.Fatalf("db.New: %v", err)
 	}

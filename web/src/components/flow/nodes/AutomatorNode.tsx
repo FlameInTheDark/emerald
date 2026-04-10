@@ -2,7 +2,7 @@ import { memo } from 'react'
 import { Handle, NodeResizeControl, Position, ResizeControlVariant } from '@xyflow/react'
 import { getNodeColor, getNodeLabel, getNodeIcon } from '../nodeTypes'
 import { getNodeBorderTint, getNodeStatusColor, resolveGroupColor, withAlpha } from '../nodeAppearance'
-import type { NodeExecutionLogData, NodeType } from '../../../types'
+import type { NodeDefinitionOutputHandle, NodeExecutionLogData, NodeType } from '../../../types'
 import {
   Zap, Clock, Webhook, Play, Square, Copy, Globe, Code,
   GitBranch, Split, Brain, Circle, Power, Timer, Link, FileText, MessageSquare, Send, RefreshCw,
@@ -41,6 +41,10 @@ interface AutomatorNodeData {
   label?: string
   type: NodeType
   config?: Record<string, unknown>
+  color?: string
+  icon?: string
+  outputHandles?: NodeDefinitionOutputHandle[]
+  isUnavailable?: boolean
   status?: 'pending' | 'running' | 'success' | 'error'
   enabled?: boolean
   isHighlight?: boolean
@@ -92,9 +96,9 @@ function getSwitchOutlets(config?: Record<string, unknown>): LogicOutlet[] {
 
 function AutomatorNode({ data, selected }: { data: AutomatorNodeData; selected: boolean }) {
   const nodeType = data.type
-  const color = getNodeColor(nodeType)
+  const color = data.color || getNodeColor(nodeType)
   const label = data.label || getNodeLabel(nodeType)
-  const iconName = getNodeIcon(nodeType)
+  const iconName = data.icon || getNodeIcon(nodeType)
   const Icon = iconMap[iconName] || Circle
   const isEnabled = data.enabled !== false
   const isHighlight = data.isHighlight === true
@@ -108,6 +112,7 @@ function AutomatorNode({ data, selected }: { data: AutomatorNodeData; selected: 
   const isGroup = nodeType === 'visual:group'
   const groupColor = resolveGroupColor(data.config)
   const isLogic = isCondition || isSwitch
+  const hasCustomOutputs = !isTool && !isReturn && !isLogic && Array.isArray(data.outputHandles) && data.outputHandles.length > 0
   const logicOutlets: LogicOutlet[] = isCondition
     ? [
         { id: 'true', label: 'True', color: '#22c55e' },
@@ -241,6 +246,14 @@ function AutomatorNode({ data, selected }: { data: AutomatorNodeData; selected: 
         )}
       </div>
 
+      {data.isUnavailable && (
+        <div className="px-4 -mt-1 pb-2">
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-amber-200">
+            Plugin unavailable
+          </div>
+        </div>
+      )}
+
       {isTool && (
         <div className="px-4 -mt-1 pb-2">
           <div className="rounded-md border border-border/70 bg-bg-overlay/60 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-sky-300">
@@ -271,6 +284,34 @@ function AutomatorNode({ data, selected }: { data: AutomatorNodeData; selected: 
                   style={{
                     right: LOGIC_HANDLE_OUTSET,
                     borderColor: outlet.color,
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : hasCustomOutputs ? (
+        <div className="px-4 pb-3 pt-1">
+          <div className="space-y-1.5">
+            {data.outputHandles?.map((outlet) => (
+              <div
+                key={outlet.id}
+                className="relative rounded-lg border border-border/80 bg-bg-overlay/60 px-2.5 py-1.5 pr-7"
+              >
+                <span
+                  className="block truncate text-[10px] font-semibold uppercase tracking-[0.08em]"
+                  style={{ color: outlet.color || color }}
+                >
+                  {outlet.label || outlet.id}
+                </span>
+                <Handle
+                  id={outlet.id}
+                  type="source"
+                  position={Position.Right}
+                  className={HANDLE_CLASS}
+                  style={{
+                    right: LOGIC_HANDLE_OUTSET,
+                    borderColor: outlet.color || color,
                   }}
                 />
               </div>

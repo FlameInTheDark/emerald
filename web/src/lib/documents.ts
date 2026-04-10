@@ -1,9 +1,12 @@
 import type { FlowDefinitionDocument, PipelineDocument, Pipeline, TemplateBundle, TemplateDocument } from '../types'
 
 export const DOCUMENT_VERSION = 'v1'
-export const PIPELINE_DOCUMENT_KIND = 'automator-pipeline'
-export const TEMPLATE_DOCUMENT_KIND = 'automator-template'
-export const TEMPLATE_BUNDLE_KIND = 'automator-template-bundle'
+export const PIPELINE_DOCUMENT_KIND = 'emerald-pipeline'
+export const TEMPLATE_DOCUMENT_KIND = 'emerald-template'
+export const TEMPLATE_BUNDLE_KIND = 'emerald-template-bundle'
+export const LEGACY_PIPELINE_DOCUMENT_KIND = 'automator-pipeline'
+export const LEGACY_TEMPLATE_DOCUMENT_KIND = 'automator-template'
+export const LEGACY_TEMPLATE_BUNDLE_KIND = 'automator-template-bundle'
 
 type ExtractedDocument = {
   kind: string
@@ -89,7 +92,12 @@ export function extractSingleDefinitionDocument(value: unknown): ExtractedDocume
   const name = typeof value.name === 'string' ? value.name : 'Imported JSON'
   const description = typeof value.description === 'string' ? value.description : null
 
-  if (kind === PIPELINE_DOCUMENT_KIND || kind === TEMPLATE_DOCUMENT_KIND) {
+  if (
+    kind === PIPELINE_DOCUMENT_KIND
+    || kind === TEMPLATE_DOCUMENT_KIND
+    || kind === LEGACY_PIPELINE_DOCUMENT_KIND
+    || kind === LEGACY_TEMPLATE_DOCUMENT_KIND
+  ) {
     if (value.version !== DOCUMENT_VERSION) {
       throw new Error(`Unsupported JSON document version "${String(value.version)}".`)
     }
@@ -102,7 +110,7 @@ export function extractSingleDefinitionDocument(value: unknown): ExtractedDocume
     }
   }
 
-  if (kind === TEMPLATE_BUNDLE_KIND) {
+  if (kind === TEMPLATE_BUNDLE_KIND || kind === LEGACY_TEMPLATE_BUNDLE_KIND) {
     const templates = value.templates
     if (!Array.isArray(templates)) {
       throw new Error('Template bundle must contain a templates array.')
@@ -118,5 +126,7 @@ export function extractSingleDefinitionDocument(value: unknown): ExtractedDocume
 }
 
 export function isTemplateBundle(value: unknown): value is TemplateBundle {
-  return isRecord(value) && value.kind === TEMPLATE_BUNDLE_KIND && Array.isArray(value.templates)
+  return isRecord(value)
+    && (value.kind === TEMPLATE_BUNDLE_KIND || value.kind === LEGACY_TEMPLATE_BUNDLE_KIND)
+    && Array.isArray(value.templates)
 }

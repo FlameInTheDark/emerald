@@ -10,14 +10,14 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/assistants"
-	"github.com/FlameInTheDark/automator/internal/auth"
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/db/query"
-	"github.com/FlameInTheDark/automator/internal/llm"
-	"github.com/FlameInTheDark/automator/internal/pipeline"
-	"github.com/FlameInTheDark/automator/internal/shellcmd"
-	"github.com/FlameInTheDark/automator/internal/skills"
+	"github.com/FlameInTheDark/emerald/internal/assistants"
+	"github.com/FlameInTheDark/emerald/internal/auth"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/query"
+	"github.com/FlameInTheDark/emerald/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/pipeline"
+	"github.com/FlameInTheDark/emerald/internal/shellcmd"
+	"github.com/FlameInTheDark/emerald/internal/skills"
 )
 
 const authSessionLocalKey = "auth_session"

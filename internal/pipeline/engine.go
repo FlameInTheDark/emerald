@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/FlameInTheDark/automator/internal/node"
-	"github.com/FlameInTheDark/automator/internal/node/trigger"
+	"github.com/FlameInTheDark/emerald/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/node/trigger"
 )
 
 type FlowNode struct {

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/pipelineops"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/pipelineops"
 )
 
 func (r *ToolRegistry) registerPipelineTools() {

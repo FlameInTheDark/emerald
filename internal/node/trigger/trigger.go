@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/FlameInTheDark/automator/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/node"
 )
 
 type channelEventContextKey string

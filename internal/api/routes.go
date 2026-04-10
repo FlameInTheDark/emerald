@@ -12,20 +12,21 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
-	"github.com/FlameInTheDark/automator/internal/api/handlers"
-	"github.com/FlameInTheDark/automator/internal/assistants"
-	"github.com/FlameInTheDark/automator/internal/auth"
-	"github.com/FlameInTheDark/automator/internal/channels"
-	"github.com/FlameInTheDark/automator/internal/crypto"
-	"github.com/FlameInTheDark/automator/internal/db"
-	"github.com/FlameInTheDark/automator/internal/db/query"
-	"github.com/FlameInTheDark/automator/internal/pipeline"
-	"github.com/FlameInTheDark/automator/internal/pipelineops"
-	"github.com/FlameInTheDark/automator/internal/scheduler"
-	"github.com/FlameInTheDark/automator/internal/shellcmd"
-	"github.com/FlameInTheDark/automator/internal/skills"
-	"github.com/FlameInTheDark/automator/internal/templateops"
-	"github.com/FlameInTheDark/automator/internal/ws"
+	"github.com/FlameInTheDark/emerald/internal/api/handlers"
+	"github.com/FlameInTheDark/emerald/internal/assistants"
+	"github.com/FlameInTheDark/emerald/internal/auth"
+	"github.com/FlameInTheDark/emerald/internal/channels"
+	"github.com/FlameInTheDark/emerald/internal/crypto"
+	"github.com/FlameInTheDark/emerald/internal/db"
+	"github.com/FlameInTheDark/emerald/internal/db/query"
+	"github.com/FlameInTheDark/emerald/internal/nodedefs"
+	"github.com/FlameInTheDark/emerald/internal/pipeline"
+	"github.com/FlameInTheDark/emerald/internal/pipelineops"
+	"github.com/FlameInTheDark/emerald/internal/scheduler"
+	"github.com/FlameInTheDark/emerald/internal/shellcmd"
+	"github.com/FlameInTheDark/emerald/internal/skills"
+	"github.com/FlameInTheDark/emerald/internal/templateops"
+	"github.com/FlameInTheDark/emerald/internal/ws"
 )
 
 //go:embed web/dist
@@ -41,6 +42,8 @@ type Config struct {
 	SkillStore      skills.Reader
 	ShellRunner     shellcmd.Runner
 	AuthService     *auth.Service
+	NodeDefinitions *nodedefs.Service
+	SecretStore     *query.SecretStore
 }
 
 func New(cfg Config) *fiber.App {
@@ -85,6 +88,11 @@ func New(cfg Config) *fiber.App {
 	channelContactStore := query.NewChannelContactStore(cfg.DB.DB)
 	channelHandler := handlers.NewChannelHandler(channelStore, channelContactStore, cfg.ChannelService)
 	userStore := query.NewUserStore(cfg.DB.DB, encryptor)
+	secretStore := cfg.SecretStore
+	if secretStore == nil {
+		secretStore = query.NewSecretStore(cfg.DB.DB, encryptor)
+	}
+	secretHandler := handlers.NewSecretHandler(secretStore)
 	appConfigStore := query.NewAppConfigStore(cfg.DB.DB)
 	assistantProfileStore := assistants.NewStore(appConfigStore)
 
@@ -93,19 +101,24 @@ func New(cfg Config) *fiber.App {
 	llmProviderStore := query.NewLLMProviderStore(cfg.DB.DB, encryptor)
 	chatStore := query.NewChatStore(cfg.DB.DB)
 	executionStore := query.NewExecutionStore(cfg.DB.DB)
+	nodeDefinitionService := cfg.NodeDefinitions
+	if nodeDefinitionService == nil {
+		nodeDefinitionService = nodedefs.NewService(nil)
+	}
+	nodeDefinitionsHandler := handlers.NewNodeDefinitionsHandler(nodeDefinitionService)
 	llmProviderHandler := handlers.NewLLMProviderHandler(llmProviderStore)
 	dashboardHandler := handlers.NewDashboardHandler(clusterStore, pipelineStore, executionStore, channelStore, cfg.Scheduler)
 	authHandler := handlers.NewAuthHandler(authService)
 	userHandler := handlers.NewUserHandler(userStore, authService)
-	pipelineService := pipelineops.NewService(pipelineStore, cfg.Scheduler)
-	templateHandler := handlers.NewTemplateHandler(templateops.NewService(templateStore, pipelineService))
+	pipelineService := pipelineops.NewService(pipelineStore, cfg.Scheduler, nodeDefinitionService)
+	templateHandler := handlers.NewTemplateHandler(templateops.NewService(templateStore, pipelineService, nodeDefinitionService))
 
 	pipelineRunHandler := handlers.NewPipelineRunHandler(
 		pipelineStore,
 		cfg.ExecutionRunner,
 	)
 	llmChatHandler := handlers.NewLLMChatHandler(llmProviderStore, clusterStore, kubernetesClusterStore, pipelineStore, chatStore, cfg.ExecutionRunner, cfg.Scheduler, cfg.SkillStore, cfg.ShellRunner, assistantProfileStore)
-	editorAssistantHandler := handlers.NewEditorAssistantHandler(llmProviderStore, assistantProfileStore, cfg.SkillStore)
+	editorAssistantHandler := handlers.NewEditorAssistantHandler(llmProviderStore, assistantProfileStore, cfg.SkillStore, nodeDefinitionService)
 	assistantProfileHandler := handlers.NewAssistantProfileHandler(assistantProfileStore)
 	executionHandler := handlers.NewExecutionHandler(executionStore, cfg.ExecutionRunner)
 
@@ -122,6 +135,7 @@ func New(cfg Config) *fiber.App {
 	api.Use(authMiddleware(authService))
 
 	api.Get("/dashboard/stats", dashboardHandler.Stats)
+	api.Get("/node-definitions", nodeDefinitionsHandler.List)
 
 	clusters := api.Group("/clusters")
 	clusters.Get("/", clusterHandler.List)
@@ -146,7 +160,7 @@ func New(cfg Config) *fiber.App {
 	channelRoutes.Delete("/:id", channelHandler.Delete)
 	channelRoutes.Get("/:id/contacts", channelHandler.ListContacts)
 
-	pipelineHandler := pipelineHandler(pipelineStore, cfg.Scheduler)
+	pipelineHandler := pipelineHandler(pipelineStore, cfg.Scheduler, nodeDefinitionService)
 	pipelines := api.Group("/pipelines")
 	pipelines.Get("/", pipelineHandler.List)
 	pipelines.Post("/", pipelineHandler.Create)
@@ -182,6 +196,13 @@ func New(cfg Config) *fiber.App {
 	users.Post("/change-password", userHandler.ChangePassword)
 	users.Delete("/:id", userHandler.Delete)
 
+	secrets := api.Group("/secrets")
+	secrets.Get("/", secretHandler.List)
+	secrets.Post("/", secretHandler.Create)
+	secrets.Get("/:id", secretHandler.Get)
+	secrets.Put("/:id", secretHandler.Update)
+	secrets.Delete("/:id", secretHandler.Delete)
+
 	llmRoutes := api.Group("/llm")
 	llmRoutes.Get("/conversations", llmChatHandler.ListConversations)
 	llmRoutes.Get("/conversations/:id", llmChatHandler.GetConversation)
@@ -209,8 +230,8 @@ func New(cfg Config) *fiber.App {
 	return app
 }
 
-func pipelineHandler(store *query.PipelineStore, scheduler *scheduler.Scheduler) *handlers.PipelineHandler {
-	return handlers.NewPipelineHandler(store, scheduler)
+func pipelineHandler(store *query.PipelineStore, scheduler *scheduler.Scheduler, validator *nodedefs.Service) *handlers.PipelineHandler {
+	return handlers.NewPipelineHandler(store, scheduler, validator)
 }
 
 func serveEmbedded() fiber.Handler {

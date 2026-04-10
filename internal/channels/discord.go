@@ -9,7 +9,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
-	dbmodels "github.com/FlameInTheDark/automator/internal/db/models"
+	dbmodels "github.com/FlameInTheDark/emerald/internal/db/models"
 )
 
 type discordRuntime struct {

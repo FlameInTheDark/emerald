@@ -7,7 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/auth"
+	"github.com/FlameInTheDark/emerald/internal/auth"
 )
 
 const authSessionLocalKey = "auth_session"

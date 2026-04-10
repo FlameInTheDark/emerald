@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	ik8s "github.com/FlameInTheDark/automator/internal/kubernetes"
-	"github.com/FlameInTheDark/automator/internal/proxmox"
-	"github.com/FlameInTheDark/automator/internal/shellcmd"
-	"github.com/FlameInTheDark/automator/internal/skills"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	ik8s "github.com/FlameInTheDark/emerald/internal/kubernetes"
+	"github.com/FlameInTheDark/emerald/internal/proxmox"
+	"github.com/FlameInTheDark/emerald/internal/shellcmd"
+	"github.com/FlameInTheDark/emerald/internal/skills"
 )
 
 type ToolHandler func(ctx context.Context, args json.RawMessage) (any, error)

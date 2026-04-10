@@ -9,7 +9,7 @@ func TestValidateAndApplyOperationsMergesPartialNodeUpdates(t *testing.T) {
 		Nodes: []map[string]any{
 			{
 				"id":       "node-1",
-				"type":     "automator",
+				"type":     "emerald",
 				"position": map[string]any{"x": 12.0, "y": 24.0},
 				"data": map[string]any{
 					"type":  "action:http",
@@ -81,7 +81,7 @@ func TestValidateAndApplyOperationsRejectsAddedNodeWithoutPosition(t *testing.T)
 			Nodes: []map[string]any{
 				{
 					"id":   "node-1",
-					"type": "automator",
+					"type": "emerald",
 					"data": map[string]any{
 						"type": "trigger:manual",
 					},

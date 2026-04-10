@@ -1,5 +1,5 @@
 import type { Edge, Node } from '@xyflow/react'
-import type { NodeExecution, NodeType, TemplateSuggestion } from '../types'
+import type { NodeExecution, NodeType, NodeTypeDefinition, SecretMetadata, TemplateSuggestion } from '../types'
 
 type NodeOutputHint = {
   expression: string
@@ -229,8 +229,17 @@ function addSuggestion(
   })
 }
 
-function buildSchemaSuggestions(nodeType: NodeType | undefined, sourceLabel?: string): TemplateSuggestion[] {
-  const hints = nodeType ? NODE_OUTPUT_HINTS[nodeType] : undefined
+function buildSchemaSuggestions(
+  nodeType: NodeType | undefined,
+  nodeDefinitions?: Record<string, NodeTypeDefinition>,
+  sourceLabel?: string,
+): TemplateSuggestion[] {
+  const runtimeHints = nodeType ? nodeDefinitions?.[nodeType]?.outputHints : undefined
+  const hints = runtimeHints && runtimeHints.length > 0
+    ? runtimeHints
+    : nodeType
+    ? NODE_OUTPUT_HINTS[nodeType]
+    : undefined
   if (!hints) {
     return []
   }
@@ -240,6 +249,17 @@ function buildSchemaSuggestions(nodeType: NodeType | undefined, sourceLabel?: st
     template: `{{${hint.expression}}}`,
     label: hint.label,
     description: sourceLabel ? `${hint.description ?? 'Suggested field.'} Source: ${sourceLabel}.` : hint.description,
+  }))
+}
+
+function buildSecretSuggestions(secrets: SecretMetadata[] = []): TemplateSuggestion[] {
+  return secrets.map((secret) => ({
+    expression: `secret.${secret.name}`,
+    template: `{{secret.${secret.name}}}`,
+    label: `Secret: ${secret.name}`,
+    description: 'Global secret value resolved at runtime.',
+    kind: 'template',
+    badge: 'Secret',
   }))
 }
 
@@ -385,6 +405,8 @@ export function buildTemplateSuggestions(
   nodes: Node[],
   edges: Edge[],
   latestNodeExecutions: NodeExecution[] = [],
+  nodeDefinitions?: Record<string, NodeTypeDefinition>,
+  secrets: SecretMetadata[] = [],
 ): TemplateSuggestion[] {
   const results: TemplateSuggestion[] = []
   const seen = new Set<string>()
@@ -413,9 +435,13 @@ export function buildTemplateSuggestions(
   sourceNodes.forEach((node) => {
     const sourceType = node.data?.type as NodeType | undefined
     const sourceLabel = (node.data?.label as string | undefined) || node.id
-    buildSchemaSuggestions(sourceType, sourceLabel).forEach((suggestion) => {
+    buildSchemaSuggestions(sourceType, nodeDefinitions, sourceLabel).forEach((suggestion) => {
       addSuggestion(results, seen, suggestion.expression, suggestion.label, suggestion.description)
     })
+  })
+
+  buildSecretSuggestions(secrets).forEach((suggestion) => {
+    addSuggestion(results, seen, suggestion.expression, suggestion.label, suggestion.description)
   })
 
   return results
@@ -426,8 +452,10 @@ export function buildPromptInsertSuggestions(
   nodes: Node[],
   edges: Edge[],
   latestNodeExecutions: NodeExecution[] = [],
+  nodeDefinitions?: Record<string, NodeTypeDefinition>,
+  secrets: SecretMetadata[] = [],
 ): TemplateSuggestion[] {
-  const templateSuggestions = buildTemplateSuggestions(selectedNodeId, nodes, edges, latestNodeExecutions)
+  const templateSuggestions = buildTemplateSuggestions(selectedNodeId, nodes, edges, latestNodeExecutions, nodeDefinitions, secrets)
   const incomingEdges = edges.filter((edge) => edge.target === selectedNodeId)
   const sourceNodes = incomingEdges
     .map((edge) => nodes.find((node) => node.id === edge.source))

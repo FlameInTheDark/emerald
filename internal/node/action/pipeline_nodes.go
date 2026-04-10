@@ -7,12 +7,12 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/llm"
-	"github.com/FlameInTheDark/automator/internal/node"
-	"github.com/FlameInTheDark/automator/internal/pipeline"
-	"github.com/FlameInTheDark/automator/internal/pipelineops"
-	"github.com/FlameInTheDark/automator/internal/templating"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/pipeline"
+	"github.com/FlameInTheDark/emerald/internal/pipelineops"
+	"github.com/FlameInTheDark/emerald/internal/templating"
 )
 
 type PipelineRunner interface {

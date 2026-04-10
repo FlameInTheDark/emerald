@@ -19,9 +19,11 @@ import type {
   LLMProvider,
   KubernetesCluster,
   KubernetesTestConnectionResult,
+  NodeDefinitionsResponse,
   Pipeline,
   PipelineDocument,
   PipelineRunResponse,
+  SecretMetadata,
   TemplateBundle,
   TemplateDetail,
   TemplateDocument,
@@ -179,6 +181,9 @@ export const api = {
   dashboard: {
     stats: () => request<DashboardStats>('/dashboard/stats'),
   },
+  nodeDefinitions: {
+    list: () => request<NodeDefinitionsResponse>('/node-definitions'),
+  },
   channels: {
     list: () => request<Channel[]>('/channels'),
     create: (data: unknown) => request<Channel>('/channels', { method: 'POST', body: JSON.stringify(data) }),
@@ -222,6 +227,13 @@ export const api = {
     activeByPipeline: (pipelineId: string) => request<ActiveExecution[]>(`/executions/pipelines/${pipelineId}/active`),
     get: (executionId: string) => request<ExecutionDetail>(`/executions/${executionId}`),
     cancel: (executionId: string) => request<ActiveExecution>(`/executions/${executionId}/cancel`, { method: 'POST' }),
+  },
+  secrets: {
+    list: () => request<SecretMetadata[]>('/secrets'),
+    create: (data: { name: string; value: string }) => request<SecretMetadata>('/secrets', { method: 'POST', body: JSON.stringify(data) }),
+    get: (id: string) => request<SecretMetadata>(`/secrets/${id}`),
+    update: (id: string, data: { name?: string; value?: string }) => request<SecretMetadata>(`/secrets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) => request<void>(`/secrets/${id}`, { method: 'DELETE' }),
   },
   llm: {
     chat: (data: unknown) => request<LLMChatResponse>('/llm/chat', { method: 'POST', body: JSON.stringify(data) }),

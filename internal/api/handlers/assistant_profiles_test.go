@@ -8,15 +8,15 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/FlameInTheDark/automator/internal/assistants"
-	"github.com/FlameInTheDark/automator/internal/db"
-	"github.com/FlameInTheDark/automator/internal/db/query"
+	"github.com/FlameInTheDark/emerald/internal/assistants"
+	"github.com/FlameInTheDark/emerald/internal/db"
+	"github.com/FlameInTheDark/emerald/internal/db/query"
 )
 
 func TestAssistantProfileHandlerReturnsDefaultsAndPersistsUpdates(t *testing.T) {
 	t.Parallel()
 
-	database, err := db.New(filepath.Join(t.TempDir(), "automator.db"))
+	database, err := db.New(filepath.Join(t.TempDir(), "emerald.db"))
 	if err != nil {
 		t.Fatalf("db.New: %v", err)
 	}

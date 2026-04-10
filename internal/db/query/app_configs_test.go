@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/FlameInTheDark/automator/internal/db"
+	"github.com/FlameInTheDark/emerald/internal/db"
 )
 
 func TestAppConfigStoreEnsureEncryptionKey(t *testing.T) {
 	t.Parallel()
 
-	database, err := db.New(filepath.Join(t.TempDir(), "automator.db"))
+	database, err := db.New(filepath.Join(t.TempDir(), "emerald.db"))
 	if err != nil {
 		t.Fatalf("db.New: %v", err)
 	}

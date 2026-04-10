@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
 )
 
 func ConfigFromModel(provider *models.LLMProvider) (Config, error) {

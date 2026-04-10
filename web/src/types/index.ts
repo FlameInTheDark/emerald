@@ -105,7 +105,7 @@ export interface FlowDefinitionDocument {
 
 export interface PipelineDocument {
   version: string
-  kind: 'automator-pipeline'
+  kind: 'emerald-pipeline' | 'automator-pipeline'
   name: string
   description?: string | null
   status?: Pipeline['status'] | string
@@ -126,7 +126,7 @@ export interface TemplateDetail extends TemplateSummary {
 
 export interface TemplateDocument {
   version: string
-  kind: 'automator-template'
+  kind: 'emerald-template' | 'automator-template'
   name: string
   description?: string | null
   definition: FlowDefinitionDocument
@@ -134,7 +134,7 @@ export interface TemplateDocument {
 
 export interface TemplateBundle {
   version: string
-  kind: 'automator-template-bundle'
+  kind: 'emerald-template-bundle' | 'automator-template-bundle'
   templates: TemplateDocument[]
 }
 
@@ -494,80 +494,92 @@ export interface TemplateSuggestion {
   badge?: string
 }
 
-export type NodeType =
-  | 'trigger:manual'
-  | 'trigger:cron'
-  | 'trigger:webhook'
-  | 'trigger:channel_message'
-  | 'action:proxmox_list_nodes'
-  | 'action:proxmox_list_workloads'
-  | 'action:vm_start'
-  | 'action:vm_stop'
-  | 'action:vm_clone'
-  | 'action:kubernetes_api_resources'
-  | 'action:kubernetes_list_resources'
-  | 'action:kubernetes_get_resource'
-  | 'action:kubernetes_apply_manifest'
-  | 'action:kubernetes_patch_resource'
-  | 'action:kubernetes_delete_resource'
-  | 'action:kubernetes_scale_resource'
-  | 'action:kubernetes_rollout_restart'
-  | 'action:kubernetes_rollout_status'
-  | 'action:kubernetes_pod_logs'
-  | 'action:kubernetes_pod_exec'
-  | 'action:kubernetes_events'
-  | 'action:http'
-  | 'action:shell_command'
-  | 'action:lua'
-  | 'action:channel_send_message'
-  | 'action:channel_reply_message'
-  | 'action:channel_edit_message'
-  | 'action:channel_send_and_wait'
-  | 'action:pipeline_get'
-  | 'action:pipeline_run'
-  | 'tool:proxmox_list_nodes'
-  | 'tool:proxmox_list_workloads'
-  | 'tool:vm_start'
-  | 'tool:vm_stop'
-  | 'tool:vm_clone'
-  | 'tool:kubernetes_api_resources'
-  | 'tool:kubernetes_list_resources'
-  | 'tool:kubernetes_get_resource'
-  | 'tool:kubernetes_apply_manifest'
-  | 'tool:kubernetes_patch_resource'
-  | 'tool:kubernetes_delete_resource'
-  | 'tool:kubernetes_scale_resource'
-  | 'tool:kubernetes_rollout_restart'
-  | 'tool:kubernetes_rollout_status'
-  | 'tool:kubernetes_pod_logs'
-  | 'tool:kubernetes_pod_exec'
-  | 'tool:kubernetes_events'
-  | 'tool:http'
-  | 'tool:shell_command'
-  | 'tool:pipeline_list'
-  | 'tool:pipeline_get'
-  | 'tool:pipeline_create'
-  | 'tool:pipeline_update'
-  | 'tool:pipeline_delete'
-  | 'tool:pipeline_run'
-  | 'tool:channel_send_and_wait'
-  | 'logic:condition'
-  | 'logic:switch'
-  | 'logic:merge'
-  | 'logic:aggregate'
-  | 'logic:return'
-  | 'llm:prompt'
-  | 'llm:agent'
-  | 'visual:group'
+export type NodeType = string
+
+export interface NodeDefinitionFieldOption {
+  value: string
+  label: string
+}
+
+export interface NodeDefinitionField {
+  name: string
+  label: string
+  description?: string
+  type: 'string' | 'textarea' | 'number' | 'boolean' | 'select' | 'json' | string
+  required?: boolean
+  placeholder?: string
+  template_supported?: boolean
+  options?: NodeDefinitionFieldOption[]
+  default_string_value?: string
+  default_bool_value?: boolean
+  default_number_value?: number
+}
+
+export interface NodeDefinitionOutputHandle {
+  id: string
+  label: string
+  color?: string
+}
+
+export interface NodeDefinitionOutputHint {
+  expression: string
+  label: string
+  description?: string
+}
+
+export interface PluginBundleStatus {
+  id: string
+  name: string
+  version?: string
+  description?: string
+  path: string
+  healthy: boolean
+  error?: string
+  node_count: number
+}
+
+export interface NodeDefinition {
+  type: NodeType
+  category: string
+  source: 'builtin' | 'plugin'
+  plugin_id?: string
+  plugin_name?: string
+  label: string
+  description: string
+  icon: string
+  color: string
+  default_config: Record<string, unknown>
+  fields?: NodeDefinitionField[]
+  outputs?: NodeDefinitionOutputHandle[]
+  output_hints?: NodeDefinitionOutputHint[]
+}
+
+export interface NodeDefinitionsResponse {
+  definitions: NodeDefinition[]
+  plugins?: PluginBundleStatus[]
+}
+
+export interface SecretMetadata {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+}
 
 export interface NodeTypeDefinition {
   type: NodeType
+  source?: 'builtin' | 'plugin'
+  pluginId?: string
+  pluginName?: string
   label: string
   description: string
   icon: string
   category: string
   color: string
   defaultConfig: Record<string, unknown>
+  fields?: NodeDefinitionField[]
+  outputs?: NodeDefinitionOutputHandle[]
+  outputHints?: NodeDefinitionOutputHint[]
 }
 
 export interface NodeCategory {

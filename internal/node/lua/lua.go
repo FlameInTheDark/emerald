@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/FlameInTheDark/automator/internal/node"
-	"github.com/FlameInTheDark/automator/internal/templating"
+	"github.com/FlameInTheDark/emerald/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/templating"
 	lua "github.com/yuin/gopher-lua"
 )
 

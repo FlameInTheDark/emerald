@@ -27,7 +27,6 @@ import NodeExecutionModal from '../components/flow/NodeExecutionModal'
 import EditorAssistantDock from '../components/flow/EditorAssistantDock'
 import AutomatorNode from '../components/flow/nodes/AutomatorNode'
 import AutomatorEdge from '../components/flow/edges/AutomatorEdge'
-import { NODE_CATEGORIES } from '../components/flow/nodeTypes'
 import { DEFAULT_NODE_BORDER_COLOR, getNodeBorderTint } from '../components/flow/nodeAppearance'
 import { api } from '../api/client'
 import { useUIStore } from '../store/ui'
@@ -41,19 +40,20 @@ import { buildPipelineDocument, extractSingleDefinitionDocument } from '../lib/d
 import { downloadJSON, sanitizeFilename } from '../lib/download'
 import { applyLivePipelineOperations } from '../lib/editorAssistant'
 import { usePipelineDraftHistory, type PipelineDraftState } from '../hooks/usePipelineDraftHistory'
+import { useNodeDefinitions } from '../hooks/useNodeDefinitions'
 import { cn } from '../lib/utils'
-import type { EditorAssistantExecutionLogAttachment, ExecutionDetail, FlowDefinitionDocument, LLMProvider, LivePipelineOperation, NodeExecutionLogData, Pipeline, PipelineRunResponse, NodeType, TemplateSummary } from '../types'
+import type { EditorAssistantExecutionLogAttachment, ExecutionDetail, FlowDefinitionDocument, LLMProvider, LivePipelineOperation, NodeExecutionLogData, NodeTypeDefinition, Pipeline, PipelineRunResponse, NodeType, TemplateSummary } from '../types'
 
 const nodeTypes = {
-  automator: AutomatorNode,
+  emerald: AutomatorNode,
 }
 
 const edgeTypes = {
-  automator: AutomatorEdge,
+  emerald: AutomatorEdge,
 }
 
 const defaultEdgeOptions = {
-  type: 'automator',
+  type: 'emerald',
   markerEnd: {
     type: MarkerType.ArrowClosed,
     color: '#1e2d3d',
@@ -65,7 +65,7 @@ const defaultEdgeOptions = {
 }
 
 const toolEdgeOptions = {
-  type: 'automator',
+  type: 'emerald',
   markerEnd: {
     type: MarkerType.ArrowClosed,
     color: '#38bdf8',
@@ -345,7 +345,7 @@ function normalizeNodesForSubflows(nodes: Node[]): Node[] {
 function hydratePersistedNode(rawNode: any): Node {
   return {
     ...rawNode,
-    type: 'automator',
+    type: 'emerald',
     data: {
       ...rawNode?.data,
       type: rawNode?.data?.type || 'trigger:manual',
@@ -368,6 +368,10 @@ function stripTransientNodeData(rawData: unknown): Record<string, unknown> {
     : {}
 
   const {
+    color: _color,
+    icon: _icon,
+    outputHandles: _outputHandles,
+    isUnavailable: _isUnavailable,
     status: _status,
     isHighlight: _isHighlight,
     executionLog: _executionLog,
@@ -994,6 +998,11 @@ function PipelineEditor() {
     queryKey: ['templates'],
     queryFn: () => api.templates.list(),
   })
+
+  const {
+    categories: nodeCategories,
+    map: nodeDefinitionMap,
+  } = useNodeDefinitions()
 
   const { data: llmProviders = [] } = useQuery<LLMProvider[]>({
     queryKey: ['llm-providers'],
@@ -1699,7 +1708,7 @@ function PipelineEditor() {
 
     const newNode: Node = {
       id: `${type}-${Date.now()}`,
-      type: 'automator',
+      type: 'emerald',
       position,
       data: {
         label,
@@ -2146,7 +2155,7 @@ function PipelineEditor() {
       nodes: normalizeNodesForSubflows([
         {
           id: groupId,
-          type: 'automator',
+          type: 'emerald',
           position: groupPosition,
           style: {
             width: groupWidth,
@@ -2285,7 +2294,7 @@ function PipelineEditor() {
 
   const buildPaneContextMenuItems = useCallback((clientX: number, clientY: number): ContextMenuItem[] => {
     const buildNodeItem = (
-      nodeType: typeof NODE_CATEGORIES[number]['types'][number],
+      nodeType: NodeTypeDefinition,
       contextLabel: string,
     ): ContextMenuItem => {
       const Icon = nodeMenuIconMap[nodeType.icon] || Zap
@@ -2307,7 +2316,7 @@ function PipelineEditor() {
       label: string,
       Icon: React.ElementType,
       color: string,
-      nodeTypes: typeof NODE_CATEGORIES[number]['types'],
+      nodeTypes: NodeTypeDefinition[],
       categoryLabel: string,
     ): ContextMenuItem | null => {
       if (nodeTypes.length === 0) {
@@ -2322,7 +2331,7 @@ function PipelineEditor() {
       }
     }
 
-    const addNodeItems = NODE_CATEGORIES.map((category) => {
+    const addNodeItems = nodeCategories.map((category) => {
       const CategoryIcon = categoryMenuIconMap[category.id] || Zap
 
       if (category.id === 'action' || category.id === 'tool') {
@@ -2380,7 +2389,7 @@ function PipelineEditor() {
         onClick: handleRun,
       },
     ]
-  }, [createNodeAtPosition, handleRun, handleSave, pasteCopiedSelectionAtClientPosition])
+  }, [createNodeAtPosition, handleRun, handleSave, nodeCategories, pasteCopiedSelectionAtClientPosition])
 
   const duplicateActiveSelection = useCallback(() => {
     if (activeSelectionIds.length === 0) {
@@ -2649,32 +2658,39 @@ function PipelineEditor() {
     const isHighlighted = highlightedNodes.has(node.id)
     const execStatus = nodeStatuses[node.id]
     const visualStatus = getVisualExecutionStatus(execStatus)
+    const nodeType = typeof node.data?.type === 'string' ? node.data.type : ''
+    const nodeDefinition = nodeType ? nodeDefinitionMap[nodeType] : undefined
+    const isUnavailablePluginNode = Boolean(
+      nodeType &&
+      (nodeType.startsWith('action:plugin/') || nodeType.startsWith('tool:plugin/')) &&
+      !nodeDefinition,
+    )
     const resizeCallbacks = node.data?.type === VISUAL_GROUP_TYPE
       ? {
           onResizeStart: handleGroupResizeStart,
           onResizeEnd: handleGroupResizeEnd,
         }
       : {}
+    const baseNodeData = {
+      ...node.data,
+      color: nodeDefinition?.color,
+      icon: nodeDefinition?.icon,
+      outputHandles: nodeDefinition?.outputs,
+      isUnavailable: isUnavailablePluginNode,
+      ...resizeCallbacks,
+    }
 
     if (!isHighlightMode) {
-      if (node.data?.type !== VISUAL_GROUP_TYPE) {
-        return node
-      }
-
       return {
         ...node,
-        data: {
-          ...node.data,
-          ...resizeCallbacks,
-        },
+        data: baseNodeData,
       }
     }
 
     return {
       ...node,
       data: {
-        ...node.data,
-        ...resizeCallbacks,
+        ...baseNodeData,
         status: visualStatus,
         enabled: isHighlighted,
         isHighlight: isHighlighted,

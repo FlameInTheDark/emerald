@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/FlameInTheDark/automator/internal/crypto"
+	"github.com/FlameInTheDark/emerald/internal/crypto"
 )
 
 func TestEncryptor_EncryptDecrypt(t *testing.T) {

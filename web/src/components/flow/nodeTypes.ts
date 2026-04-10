@@ -1,4 +1,4 @@
-import type { NodeType, NodeTypeDefinition, NodeCategory } from '../../types'
+import type { NodeDefinition, NodeType, NodeTypeDefinition, NodeCategory } from '../../types'
 
 const KUBERNETES_ACTION_TYPES: NodeTypeDefinition[] = [
   {
@@ -35,7 +35,7 @@ const KUBERNETES_ACTION_TYPES: NodeTypeDefinition[] = [
     icon: 'copy',
     category: 'action',
     color: '#10b981',
-    defaultConfig: { clusterId: '', namespace: '', manifest: '', fieldManager: 'automator', force: false },
+        defaultConfig: { clusterId: '', namespace: '', manifest: '', fieldManager: 'emerald', force: false },
   },
   {
     type: 'action:kubernetes_patch_resource',
@@ -537,6 +537,74 @@ export const NODE_TYPE_MAP: Record<NodeType, NodeTypeDefinition> = [...NODE_CATE
   },
   {} as Record<NodeType, NodeTypeDefinition>,
 )
+
+function toNodeTypeDefinition(definition: NodeDefinition): NodeTypeDefinition {
+  return {
+    type: definition.type,
+    source: definition.source,
+    pluginId: definition.plugin_id,
+    pluginName: definition.plugin_name,
+    label: definition.label,
+    description: definition.description,
+    icon: definition.icon,
+    category: definition.category,
+    color: definition.color,
+    defaultConfig: definition.default_config || {},
+    fields: definition.fields || [],
+    outputs: definition.outputs || [],
+    outputHints: definition.output_hints || [],
+  }
+}
+
+export function buildNodeCatalog(definitions: NodeDefinition[] = []): { categories: NodeCategory[]; map: Record<string, NodeTypeDefinition> } {
+  const mergedMap: Record<string, NodeTypeDefinition> = {
+    ...NODE_TYPE_MAP,
+  }
+
+  definitions.forEach((definition) => {
+    mergedMap[definition.type] = toNodeTypeDefinition(definition)
+  })
+
+  const grouped = new Map<string, NodeCategory>()
+
+  Object.values(mergedMap).forEach((definition) => {
+    if (definition.category === 'visual') {
+      return
+    }
+
+    const existing = grouped.get(definition.category)
+    if (existing) {
+      existing.types.push(definition)
+      return
+    }
+
+    const staticCategory = NODE_CATEGORIES.find((category) => category.id === definition.category)
+    grouped.set(definition.category, {
+      id: definition.category,
+      label: staticCategory?.label || definition.category,
+      color: staticCategory?.color || definition.color || '#6b7280',
+      types: [definition],
+    })
+  })
+
+  const categories = Array.from(grouped.values())
+    .map((category) => ({
+      ...category,
+      types: [...category.types].sort((left, right) => left.label.localeCompare(right.label)),
+    }))
+    .sort((left, right) => {
+      const leftIndex = NODE_CATEGORIES.findIndex((category) => category.id === left.id)
+      const rightIndex = NODE_CATEGORIES.findIndex((category) => category.id === right.id)
+      const normalizedLeft = leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex
+      const normalizedRight = rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex
+      if (normalizedLeft === normalizedRight) {
+        return left.label.localeCompare(right.label)
+      }
+      return normalizedLeft - normalizedRight
+    })
+
+  return { categories, map: mergedMap }
+}
 
 export function getNodeColor(type?: string): string {
   if (typeof type !== 'string' || !type) {

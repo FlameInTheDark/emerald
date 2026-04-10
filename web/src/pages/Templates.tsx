@@ -111,7 +111,7 @@ export default function Templates() {
     try {
       setIsExportingLibrary(true)
       const document = await api.templates.exportAll()
-      downloadJSON('automator-templates.json', document)
+      downloadJSON('emerald-templates.json', document)
       addToast({ type: 'success', title: 'Template library exported' })
     } catch (err) {
       addToast({

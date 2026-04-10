@@ -40,7 +40,7 @@ function AutomatorEdge({
       && edgeData.gradientStartColor
       && edgeData.gradientEndColor,
   )
-  const gradientId = `automator-edge-gradient-${sanitizeId(id)}`
+  const gradientId = `emerald-edge-gradient-${sanitizeId(id)}`
 
   return (
     <>

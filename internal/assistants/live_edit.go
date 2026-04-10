@@ -1,12 +1,18 @@
 package assistants
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
-	"github.com/FlameInTheDark/automator/internal/pipelineops"
+	"github.com/FlameInTheDark/emerald/internal/pipeline"
+	"github.com/FlameInTheDark/emerald/internal/pipelineops"
 )
+
+type FlowValidator interface {
+	ValidateFlowData(ctx context.Context, flowData pipeline.FlowData, allowUnavailablePlugins bool) error
+}
 
 type PipelineSnapshot struct {
 	Name        string           `json:"name,omitempty"`
@@ -70,6 +76,7 @@ func NormalizePipelineSnapshot(snapshot PipelineSnapshot) (PipelineSnapshot, err
 func ValidateAndApplyOperations(
 	snapshot PipelineSnapshot,
 	operations []LivePipelineOperation,
+	validators ...FlowValidator,
 ) ([]LivePipelineOperation, PipelineSnapshot, error) {
 	working, err := NormalizePipelineSnapshot(snapshot)
 	if err != nil {
@@ -89,7 +96,12 @@ func ValidateAndApplyOperations(
 		normalized = append(normalized, nextOperation)
 	}
 
-	if err := validateSnapshot(working); err != nil {
+	var validator FlowValidator
+	if len(validators) > 0 {
+		validator = validators[0]
+	}
+
+	if err := validateSnapshot(working, validator); err != nil {
 		return nil, PipelineSnapshot{}, err
 	}
 
@@ -239,7 +251,7 @@ func applyOperation(snapshot PipelineSnapshot, operation LivePipelineOperation) 
 	}
 }
 
-func validateSnapshot(snapshot PipelineSnapshot) error {
+func validateSnapshot(snapshot PipelineSnapshot, validator FlowValidator) error {
 	nodesJSON, err := json.Marshal(snapshot.Nodes)
 	if err != nil {
 		return fmt.Errorf("encode nodes: %w", err)
@@ -250,6 +262,15 @@ func validateSnapshot(snapshot PipelineSnapshot) error {
 	}
 	if err := pipelineops.ValidateDefinition(string(nodesJSON), string(edgesJSON)); err != nil {
 		return fmt.Errorf("invalid live pipeline edit: %w", err)
+	}
+	if validator != nil {
+		flowData, err := pipeline.ParseFlowData(string(nodesJSON), string(edgesJSON))
+		if err != nil {
+			return fmt.Errorf("parse live pipeline edit: %w", err)
+		}
+		if err := validator.ValidateFlowData(context.Background(), *flowData, true); err != nil {
+			return fmt.Errorf("invalid live pipeline edit: %w", err)
+		}
 	}
 	return nil
 }
@@ -525,7 +546,7 @@ func normalizeNodeForCanvas(node map[string]any, requirePosition bool) error {
 		}
 		node["type"] = trimmedType
 	} else {
-		node["type"] = "automator"
+		node["type"] = "emerald"
 	}
 
 	positionRaw, hasPosition := node["position"]

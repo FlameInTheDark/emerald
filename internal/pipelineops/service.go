@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/nodeconfig"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/nodeconfig"
 )
 
 const (
@@ -30,9 +30,14 @@ type Reloader interface {
 	Reload(ctx context.Context) error
 }
 
+type DefinitionValidator interface {
+	ValidateDefinition(ctx context.Context, nodesJSON string, edgesJSON string, allowUnavailablePlugins bool) error
+}
+
 type Service struct {
-	store    Store
-	reloader Reloader
+	store     Store
+	reloader  Reloader
+	validator DefinitionValidator
 }
 
 type Reference struct {
@@ -53,11 +58,15 @@ type flowEdge struct {
 	SourceHandle string `json:"sourceHandle,omitempty"`
 }
 
-func NewService(store Store, reloader Reloader) *Service {
-	return &Service{
+func NewService(store Store, reloader Reloader, validators ...DefinitionValidator) *Service {
+	service := &Service{
 		store:    store,
 		reloader: reloader,
 	}
+	if len(validators) > 0 {
+		service.validator = validators[0]
+	}
+	return service
 }
 
 func (s *Service) List(ctx context.Context, ref Reference) ([]models.Pipeline, error) {
@@ -113,6 +122,11 @@ func (s *Service) Create(ctx context.Context, pipelineModel *models.Pipeline) er
 	if err := NormalizePipeline(pipelineModel); err != nil {
 		return err
 	}
+	if s.validator != nil {
+		if err := s.validator.ValidateDefinition(ctx, pipelineModel.Nodes, pipelineModel.Edges, pipelineModel.Status != StatusActive); err != nil {
+			return err
+		}
+	}
 	if err := s.store.Create(ctx, pipelineModel); err != nil {
 		return fmt.Errorf("create pipeline: %w", err)
 	}
@@ -127,6 +141,11 @@ func (s *Service) Update(ctx context.Context, pipelineModel *models.Pipeline) er
 	}
 	if err := NormalizePipeline(pipelineModel); err != nil {
 		return err
+	}
+	if s.validator != nil {
+		if err := s.validator.ValidateDefinition(ctx, pipelineModel.Nodes, pipelineModel.Edges, pipelineModel.Status != StatusActive); err != nil {
+			return err
+		}
 	}
 	if err := s.store.Update(ctx, pipelineModel); err != nil {
 		return fmt.Errorf("update pipeline: %w", err)

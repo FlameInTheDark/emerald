@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildPromptInsertSuggestions } from './templates'
+import { buildPromptInsertSuggestions, buildTemplateSuggestions } from './templates'
 
 describe('buildPromptInsertSuggestions', () => {
   const nodes = [
@@ -93,5 +93,55 @@ describe('buildPromptInsertSuggestions', () => {
     expect(sample?.template).toContain('Example merged input built from the latest upstream execution data:')
     expect(sample?.template).toContain('"status_code": 200')
     expect(sample?.template).toContain('"message": "ok"')
+  })
+
+  it('includes runtime output hints and secret suggestions in template autocomplete', () => {
+    const suggestions = buildTemplateSuggestions(
+      'prompt',
+      nodes,
+      edges,
+      [],
+      {
+        'action:http': {
+          type: 'action:http',
+          label: 'HTTP Request',
+          description: 'Make an HTTP request',
+          icon: 'globe',
+          category: 'action',
+          color: '#10b981',
+          defaultConfig: {},
+          outputHints: [
+            {
+              expression: 'input.response.body',
+              label: 'HTTP body',
+              description: 'Runtime response body.',
+            },
+          ],
+        },
+      },
+      [
+        {
+          id: 'secret-1',
+          name: 'db_password',
+          created_at: '2026-04-10T00:00:00Z',
+          updated_at: '2026-04-10T00:00:00Z',
+        },
+      ],
+    )
+
+    expect(suggestions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          expression: 'input.response.body',
+          template: '{{input.response.body}}',
+          label: 'HTTP body',
+        }),
+        expect.objectContaining({
+          expression: 'secret.db_password',
+          template: '{{secret.db_password}}',
+          label: 'Secret: db_password',
+        }),
+      ]),
+    )
   })
 })

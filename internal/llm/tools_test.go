@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
-	"github.com/FlameInTheDark/automator/internal/skills"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/skills"
 )
 
 type stubClusterStore struct {

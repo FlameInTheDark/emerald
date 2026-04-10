@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/FlameInTheDark/automator/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
 )
 
 func TestChannelEditActionExecuteUsesPreviousSendOutput(t *testing.T) {

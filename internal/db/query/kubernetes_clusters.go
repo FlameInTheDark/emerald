@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/FlameInTheDark/automator/internal/crypto"
-	"github.com/FlameInTheDark/automator/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/crypto"
+	"github.com/FlameInTheDark/emerald/internal/db/models"
 	sq "github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 )
