@@ -1,3 +1,12 @@
+# [1.6.0](https://github.com/FlameInTheDark/emerald/compare/v1.5.0...v1.6.0) (2026-04-10)
+
+
+### Features
+
+* copy and paste nodes ([ca186b3](https://github.com/FlameInTheDark/emerald/commit/ca186b3f50225923bad2b8d8bb25fe1434220c4b))
+* Plugin system ([8d67158](https://github.com/FlameInTheDark/emerald/commit/8d67158eff61bd13e38d7b501897aa52a8d287ff))
+* undo and redo feature in pipeline editor ([3cf8593](https://github.com/FlameInTheDark/emerald/commit/3cf8593c9e1bffc7832b84eeeed845f147890966))
+
 # [1.5.0](https://github.com/FlameInTheDark/emerald/compare/v1.4.0...v1.5.0) (2026-04-09)
 
 
