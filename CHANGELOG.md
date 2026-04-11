@@ -1,3 +1,11 @@
+# [1.7.0](https://github.com/FlameInTheDark/emerald/compare/v1.6.0...v1.7.0) (2026-04-11)
+
+
+### Features
+
+* Added nodes, new Lua modules and UX improvements ([5e79cdd](https://github.com/FlameInTheDark/emerald/commit/5e79cdd5d98ef70928e55edf0f8c3d1c19d87189))
+* plugin icons and rediscover feature ([97875a5](https://github.com/FlameInTheDark/emerald/commit/97875a5825b2cbc6ef2544ae4022ed8a799f2f1e))
+
 # [1.6.0](https://github.com/FlameInTheDark/emerald/compare/v1.5.0...v1.6.0) (2026-04-10)
 
 
