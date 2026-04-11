@@ -1,5 +1,23 @@
 import type { NodeDefinition, NodeType, NodeTypeDefinition, NodeCategory } from '../../types'
 
+export interface NodeMenuGroup {
+  id: string
+  label: string
+  path: string[]
+  groups: NodeMenuGroup[]
+  types: NodeTypeDefinition[]
+  totalCount: number
+}
+
+export interface NodeMenuCategory {
+  id: string
+  label: string
+  color: string
+  groups: NodeMenuGroup[]
+  types: NodeTypeDefinition[]
+  totalCount: number
+}
+
 const KUBERNETES_ACTION_TYPES: NodeTypeDefinition[] = [
   {
     type: 'action:kubernetes_api_resources',
@@ -532,14 +550,14 @@ const EXTRA_NODE_TYPES: NodeTypeDefinition[] = [
 
 export const NODE_TYPE_MAP: Record<NodeType, NodeTypeDefinition> = [...NODE_CATEGORIES.flatMap((category) => category.types), ...EXTRA_NODE_TYPES].reduce(
   (acc, typeDef) => {
-    acc[typeDef.type] = typeDef
+    acc[typeDef.type] = withResolvedMenuPath(typeDef)
     return acc
   },
   {} as Record<NodeType, NodeTypeDefinition>,
 )
 
 function toNodeTypeDefinition(definition: NodeDefinition): NodeTypeDefinition {
-  return {
+  return withResolvedMenuPath({
     type: definition.type,
     source: definition.source,
     pluginId: definition.plugin_id,
@@ -549,11 +567,12 @@ function toNodeTypeDefinition(definition: NodeDefinition): NodeTypeDefinition {
     icon: definition.icon,
     category: definition.category,
     color: definition.color,
+    menuPath: definition.menu_path,
     defaultConfig: definition.default_config || {},
     fields: definition.fields || [],
     outputs: definition.outputs || [],
     outputHints: definition.output_hints || [],
-  }
+  })
 }
 
 export function buildNodeCatalog(definitions: NodeDefinition[] = []): { categories: NodeCategory[]; map: Record<string, NodeTypeDefinition> } {
@@ -604,6 +623,167 @@ export function buildNodeCatalog(definitions: NodeDefinition[] = []): { categori
     })
 
   return { categories, map: mergedMap }
+}
+
+function withResolvedMenuPath(definition: NodeTypeDefinition): NodeTypeDefinition {
+  return {
+    ...definition,
+    menuPath: resolveMenuPath(definition),
+  }
+}
+
+function resolveMenuPath(definition: Pick<NodeTypeDefinition, 'type' | 'category' | 'menuPath'>): string[] {
+  if (definition.menuPath !== undefined) {
+    return normalizeMenuPath(definition.menuPath)
+  }
+
+  if (definition.category !== 'action' && definition.category !== 'tool') {
+    return []
+  }
+
+  if (isProxmoxNodeType(definition.type)) {
+    return ['Proxmox']
+  }
+  if (isKubernetesNodeType(definition.type)) {
+    return ['Kubernetes']
+  }
+
+  return ['General']
+}
+
+function normalizeMenuPath(menuPath?: string[]): string[] {
+  if (!Array.isArray(menuPath)) {
+    return []
+  }
+
+  return menuPath
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+}
+
+function isProxmoxNodeType(type: string): boolean {
+  return [
+    'action:proxmox_list_nodes',
+    'action:proxmox_list_workloads',
+    'action:vm_start',
+    'action:vm_stop',
+    'action:vm_clone',
+    'tool:proxmox_list_nodes',
+    'tool:proxmox_list_workloads',
+    'tool:vm_start',
+    'tool:vm_stop',
+    'tool:vm_clone',
+  ].includes(type)
+}
+
+function isKubernetesNodeType(type: string): boolean {
+  return type.includes(':kubernetes_')
+}
+
+function sortNodeTypes(types: NodeTypeDefinition[]): NodeTypeDefinition[] {
+  return [...types].sort((left, right) => left.label.localeCompare(right.label))
+}
+
+function sortNodeMenuGroups(groups: NodeMenuGroup[]): NodeMenuGroup[] {
+  const priority = (label: string): number => {
+    switch (label) {
+      case 'General':
+        return 0
+      case 'Proxmox':
+        return 1
+      case 'Kubernetes':
+        return 2
+      default:
+        return 100
+    }
+  }
+
+  return [...groups]
+    .map((group) => ({
+      ...group,
+      groups: sortNodeMenuGroups(group.groups),
+      types: sortNodeTypes(group.types),
+    }))
+    .sort((left, right) => {
+      const leftPriority = priority(left.label)
+      const rightPriority = priority(right.label)
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority
+      }
+      return left.label.localeCompare(right.label)
+    })
+}
+
+function countNodeMenuEntries(types: NodeTypeDefinition[], groups: NodeMenuGroup[]): number {
+  return types.length + groups.reduce((total, group) => total + group.totalCount, 0)
+}
+
+export function buildNodeMenuCategories(categories: NodeCategory[]): NodeMenuCategory[] {
+  return categories.map((category) => {
+    const rootGroups: NodeMenuGroup[] = []
+    const rootTypes: NodeTypeDefinition[] = []
+
+    category.types.forEach((type) => {
+      const menuPath = resolveMenuPath(type)
+      if (menuPath.length === 0) {
+        rootTypes.push(type)
+        return
+      }
+
+      let currentGroups = rootGroups
+      let currentGroup: NodeMenuGroup | null = null
+
+      menuPath.forEach((segment, index) => {
+        const nextPath = menuPath.slice(0, index + 1)
+        const groupID = nextPath.join(' / ')
+        const existing = currentGroups.find((group) => group.id === groupID)
+        if (existing) {
+          currentGroup = existing
+        } else {
+          currentGroup = {
+            id: groupID,
+            label: segment,
+            path: nextPath,
+            groups: [],
+            types: [],
+            totalCount: 0,
+          }
+          currentGroups.push(currentGroup)
+        }
+
+        if (index < menuPath.length - 1 && currentGroup) {
+          currentGroups = currentGroup.groups
+        }
+      })
+
+      currentGroup?.types.push(type)
+    })
+
+    const materializeGroups = (groups: NodeMenuGroup[]): NodeMenuGroup[] => {
+      return sortNodeMenuGroups(groups.map((group) => {
+        const nestedGroups = materializeGroups(group.groups)
+        const directTypes = sortNodeTypes(group.types)
+        return {
+          ...group,
+          groups: nestedGroups,
+          types: directTypes,
+          totalCount: countNodeMenuEntries(directTypes, nestedGroups),
+        }
+      }))
+    }
+
+    const groups = materializeGroups(rootGroups)
+    const types = sortNodeTypes(rootTypes)
+
+    return {
+      id: category.id,
+      label: category.label,
+      color: category.color,
+      groups,
+      types,
+      totalCount: countNodeMenuEntries(types, groups),
+    }
+  }).filter((category) => category.totalCount > 0)
 }
 
 export function getNodeColor(type?: string): string {

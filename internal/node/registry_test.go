@@ -74,6 +74,25 @@ func TestRegistry_GetUnknownType(t *testing.T) {
 	}
 }
 
+func TestRegistry_GetUsesDynamicResolver(t *testing.T) {
+	registry := node.NewRegistry()
+	expected := &mockExecutor{output: map[string]any{"status": "dynamic"}}
+	registry.SetDynamicResolver(func(nodeType node.NodeType) (node.NodeExecutor, bool) {
+		if nodeType != "plugin:test" {
+			return nil, false
+		}
+		return expected, true
+	})
+
+	got, err := registry.Get("plugin:test")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got != expected {
+		t.Fatalf("Get() returned unexpected executor")
+	}
+}
+
 func TestRegistry_ListTypes(t *testing.T) {
 	registry := node.NewRegistry()
 	registry.Register("type:a", &mockExecutor{})

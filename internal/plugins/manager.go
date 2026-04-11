@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	hplugin "github.com/hashicorp/go-plugin"
 
@@ -48,6 +49,7 @@ type bundleRuntime struct {
 	plugin   pluginapi.Plugin
 	info     pluginapi.PluginInfo
 	error    error
+	refs     sync.WaitGroup
 }
 
 type Manager struct {
@@ -246,41 +248,45 @@ func (m *Manager) Binding(nodeType string) (NodeBinding, bool) {
 }
 
 func (m *Manager) ValidateConfig(ctx context.Context, nodeType string, config json.RawMessage) error {
-	runtime, _, nodeID, err := m.resolve(nodeType)
+	runtime, _, nodeID, release, err := m.resolve(nodeType)
 	if err != nil {
 		return err
 	}
+	defer release()
 	return runtime.plugin.ValidateConfig(ctx, nodeID, normalizeConfigPayload(config))
 }
 
 func (m *Manager) ExecuteAction(ctx context.Context, nodeType string, config json.RawMessage, input map[string]any) (any, error) {
-	runtime, _, nodeID, err := m.resolve(nodeType)
+	runtime, _, nodeID, release, err := m.resolve(nodeType)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	return runtime.plugin.ExecuteAction(ctx, nodeID, normalizeConfigPayload(config), copyInput(input))
 }
 
 func (m *Manager) ToolDefinition(ctx context.Context, nodeType string, meta pluginapi.ToolNodeMetadata, config json.RawMessage) (*pluginapi.ToolDefinition, error) {
-	runtime, _, nodeID, err := m.resolve(nodeType)
+	runtime, _, nodeID, release, err := m.resolve(nodeType)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	return runtime.plugin.ToolDefinition(ctx, nodeID, meta, normalizeConfigPayload(config))
 }
 
 func (m *Manager) ExecuteTool(ctx context.Context, nodeType string, config json.RawMessage, args json.RawMessage, input map[string]any) (any, error) {
-	runtime, _, nodeID, err := m.resolve(nodeType)
+	runtime, _, nodeID, release, err := m.resolve(nodeType)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	return runtime.plugin.ExecuteTool(ctx, nodeID, normalizeConfigPayload(config), normalizeConfigPayload(args), copyInput(input))
 }
 
-func (m *Manager) resolve(nodeType string) (*bundleRuntime, NodeBinding, string, error) {
+func (m *Manager) resolve(nodeType string) (*bundleRuntime, NodeBinding, string, func(), error) {
 	kind, pluginID, nodeID, ok := ParseNodeType(nodeType)
 	if !ok {
-		return nil, NodeBinding{}, "", fmt.Errorf("node type %q is not a plugin node", nodeType)
+		return nil, NodeBinding{}, "", nil, fmt.Errorf("node type %q is not a plugin node", nodeType)
 	}
 
 	m.mu.RLock()
@@ -288,21 +294,22 @@ func (m *Manager) resolve(nodeType string) (*bundleRuntime, NodeBinding, string,
 
 	binding, ok := m.nodes[strings.TrimSpace(nodeType)]
 	if !ok {
-		return nil, NodeBinding{}, "", fmt.Errorf("plugin node type %q is unavailable", nodeType)
+		return nil, NodeBinding{}, "", nil, fmt.Errorf("plugin node type %q is unavailable", nodeType)
 	}
 	if binding.Kind != kind || binding.PluginID != pluginID {
-		return nil, NodeBinding{}, "", fmt.Errorf("plugin node type %q resolved to an unexpected plugin binding", nodeType)
+		return nil, NodeBinding{}, "", nil, fmt.Errorf("plugin node type %q resolved to an unexpected plugin binding", nodeType)
 	}
 
 	runtime := m.bundles[pluginID]
 	if runtime == nil || runtime.plugin == nil {
-		return nil, NodeBinding{}, "", fmt.Errorf("plugin %q is unavailable", pluginID)
+		return nil, NodeBinding{}, "", nil, fmt.Errorf("plugin %q is unavailable", pluginID)
 	}
 	if runtime.error != nil {
-		return nil, NodeBinding{}, "", runtime.error
+		return nil, NodeBinding{}, "", nil, runtime.error
 	}
 
-	return runtime, binding, nodeID, nil
+	runtime.refs.Add(1)
+	return runtime, binding, nodeID, runtime.refs.Done, nil
 }
 
 func startRuntime(ctx context.Context, manifest Manifest) (*bundleRuntime, []NodeBinding, error) {
@@ -410,6 +417,18 @@ func (r *bundleRuntime) close() {
 	if r == nil || r.client == nil {
 		return
 	}
+
+	done := make(chan struct{})
+	go func() {
+		r.refs.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+	}
+
 	r.client.Kill()
 }
 

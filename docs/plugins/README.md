@@ -100,6 +100,24 @@ Runtime checks:
 - Node IDs must be unique inside one plugin.
 - Resolved node types must be unique across all loaded plugins.
 
+## Node Placement In Menus
+
+Each plugin node can optionally declare a menu path:
+
+```go
+MenuPath: []string{"Service Name", "Requests"},
+```
+
+That path controls where the node appears in both the node palette and the editor context menu.
+
+Examples:
+
+- `[]string{"Service Name"}` becomes `Actions -> Service Name -> Node`
+- `[]string{"Service Name", "Requests"}` becomes `Actions -> Service Name -> Requests -> Node`
+- `[]string{}` keeps the node at the category root
+
+If you omit `MenuPath` entirely for an `action` or `tool` node, Emerald places it under the default `General` group.
+
 ## High-Level Runtime Flow
 
 At startup, Emerald:
@@ -153,6 +171,7 @@ func main() {
           Description: "Do something custom.",
           Icon:        "globe",
           Color:       "#f97316",
+          MenuPath:    []string{"My Plugin", "Requests"},
           DefaultConfig: map[string]any{
             "url": "",
           },
@@ -354,10 +373,11 @@ After restarting Emerald, you should see the plugin nodes in the normal `Actions
 ## Practical Authoring Tips
 
 - Keep `NodeSpec.ID` stable once users may already have pipelines that reference it.
+- Use `MenuPath` to group related plugin nodes under a service or feature area instead of dropping everything into one long category list.
 - Return plain JSON-compatible objects from actions and tools.
 - Validate required config fields early and return friendly errors.
 - Prefer explicit output field names over deeply nested ad hoc payloads.
-- Use built-in icon names such as `globe`, `code`, `wrench`, `workflow`, `brain`, `bot`, `list`, `send`, or `message-square` so the UI can render them consistently.
+- Use any Lucide icon name for `NodeSpec.Icon`. Kebab-case names such as `globe`, `database`, `server`, `cloud`, or `message-square` are the clearest choice.
 - Build one action node first, get it working in the editor, then add tool nodes and custom outputs.
 
 ## Troubleshooting

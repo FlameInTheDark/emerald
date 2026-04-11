@@ -183,6 +183,7 @@ export const api = {
   },
   nodeDefinitions: {
     list: () => request<NodeDefinitionsResponse>('/node-definitions'),
+    refresh: () => request<NodeDefinitionsResponse>('/node-definitions/refresh', { method: 'POST' }),
   },
   channels: {
     list: () => request<Channel[]>('/channels'),

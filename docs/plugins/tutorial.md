@@ -189,6 +189,7 @@ func main() {
 					Description: "Perform an HTTP request and branch on success or error.",
 					Icon:        "globe",
 					Color:       "#14b8a6",
+					MenuPath:    []string{"Hello HTTP", "Requests"},
 					DefaultConfig: map[string]any{
 						"url":         "https://api.github.com",
 						"method":      "GET",
@@ -292,6 +293,7 @@ If `Info.Nodes` contains an action with ID `fetch_json`, then `Actions` must inc
 - `ID` is the stable node ID inside your plugin
 - `Kind` is `action` or `tool`
 - `Label`, `Description`, `Icon`, and `Color` drive the editor UI
+- `MenuPath` controls where the node appears in the palette and context menu
 - `DefaultConfig` becomes the initial config for newly created nodes
 - `Fields` drives the generic config form
 - `Outputs` adds output pins on action nodes
@@ -320,6 +322,18 @@ It should not assume that `{{input.foo}}` or `{{secret.api_token}}` is already r
 in the `bearerToken` field, your plugin receives the resolved string value, not the template expression.
 
 The `input` parameter contains the current payload flowing into the node. That is the same runtime object users access in templates as `input`.
+
+### `MenuPath`
+
+`MenuPath` is optional, but it is the easiest way to keep larger plugins organized.
+
+Examples:
+
+- `[]string{"GitHub"}` gives you `Actions -> GitHub -> Fetch JSON`
+- `[]string{"GitHub", "Issues"}` gives you `Actions -> GitHub -> Issues -> Fetch JSON`
+- `[]string{}` keeps the node at the category root
+
+If you omit `MenuPath` for an action or tool node, Emerald places it under `General`.
 
 ### `matches`
 
@@ -477,6 +491,7 @@ bundle.Info.Nodes = append(bundle.Info.Nodes, pluginapi.NodeSpec{
 	Description: "Simple example tool node.",
 	Icon:        "wrench",
 	Color:       "#38bdf8",
+	MenuPath:    []string{"Hello HTTP", "Agent Tools"},
 })
 
 bundle.Tools["echo_tool"] = &echoTool{}

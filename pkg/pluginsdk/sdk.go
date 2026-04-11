@@ -58,6 +58,7 @@ func NewClientConfig(cmd *exec.Cmd) *plugin.ClientConfig {
 		HandshakeConfig:  Handshake,
 		Plugins:          PluginMap(nil),
 		Cmd:              cmd,
+		Managed:          true,
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
 		Logger:           hclog.NewNullLogger(),
 	}

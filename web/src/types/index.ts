@@ -548,6 +548,7 @@ export interface NodeDefinition {
   description: string
   icon: string
   color: string
+  menu_path?: string[]
   default_config: Record<string, unknown>
   fields?: NodeDefinitionField[]
   outputs?: NodeDefinitionOutputHandle[]
@@ -557,6 +558,7 @@ export interface NodeDefinition {
 export interface NodeDefinitionsResponse {
   definitions: NodeDefinition[]
   plugins?: PluginBundleStatus[]
+  error?: string
 }
 
 export interface SecretMetadata {
@@ -576,6 +578,7 @@ export interface NodeTypeDefinition {
   icon: string
   category: string
   color: string
+  menuPath?: string[]
   defaultConfig: Record<string, unknown>
   fields?: NodeDefinitionField[]
   outputs?: NodeDefinitionOutputHandle[]

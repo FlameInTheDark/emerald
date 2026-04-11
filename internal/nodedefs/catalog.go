@@ -1,6 +1,10 @@
 package nodedefs
 
-import "github.com/FlameInTheDark/emerald/pkg/pluginapi"
+import (
+	"strings"
+
+	"github.com/FlameInTheDark/emerald/pkg/pluginapi"
+)
 
 const (
 	colorTrigger = "#f59e0b"
@@ -96,6 +100,7 @@ func builtin(nodeType string, category string, label string, description string,
 		Description:   description,
 		Icon:          icon,
 		Color:         color,
+		MenuPath:      defaultMenuPathForDefinition(nodeType, category, nil),
 		DefaultConfig: defaultConfig,
 		Fields:        nil,
 		Outputs:       nil,
@@ -114,9 +119,72 @@ func pluginDefinitionFromBinding(binding anyBinding) Definition {
 		Description:   binding.Spec.Description,
 		Icon:          binding.Spec.Icon,
 		Color:         binding.Spec.Color,
+		MenuPath:      defaultMenuPathForDefinition(binding.Type, string(binding.Spec.Kind), binding.Spec.MenuPath),
 		DefaultConfig: binding.Spec.DefaultConfig,
 		Fields:        append([]pluginapi.FieldSpec(nil), binding.Spec.Fields...),
 		Outputs:       append([]pluginapi.OutputHandle(nil), binding.Spec.Outputs...),
 		OutputHints:   append([]pluginapi.OutputHint(nil), binding.Spec.OutputHints...),
 	}
+}
+
+func defaultMenuPathForDefinition(nodeType string, category string, configured []string) []string {
+	if configured != nil {
+		return normalizeMenuPath(configured)
+	}
+
+	if category != "action" && category != "tool" {
+		return nil
+	}
+
+	switch {
+	case isProxmoxNodeType(nodeType):
+		return []string{"Proxmox"}
+	case isKubernetesNodeType(nodeType):
+		return []string{"Kubernetes"}
+	default:
+		return []string{"General"}
+	}
+}
+
+func normalizeMenuPath(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+
+	return result
+}
+
+func isProxmoxNodeType(nodeType string) bool {
+	switch nodeType {
+	case "action:proxmox_list_nodes",
+		"action:proxmox_list_workloads",
+		"action:vm_start",
+		"action:vm_stop",
+		"action:vm_clone",
+		"tool:proxmox_list_nodes",
+		"tool:proxmox_list_workloads",
+		"tool:vm_start",
+		"tool:vm_stop",
+		"tool:vm_clone":
+		return true
+	default:
+		return false
+	}
+}
+
+func isKubernetesNodeType(nodeType string) bool {
+	return strings.Contains(nodeType, ":kubernetes_")
 }

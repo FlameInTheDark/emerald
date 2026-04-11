@@ -155,6 +155,7 @@ func main() {
 					Description: "Make an HTTP request and branch on success or error status codes.",
 					Icon:        "globe",
 					Color:       "#f97316",
+					MenuPath:    []string{"Sample Request Kit", "HTTP"},
 					DefaultConfig: map[string]any{
 						"url":         "",
 						"method":      "GET",
@@ -215,6 +216,7 @@ func main() {
 					Description: "Expose a configurable HTTP client as an agent tool.",
 					Icon:        "wrench",
 					Color:       "#38bdf8",
+					MenuPath:    []string{"Sample Request Kit", "Agent Tools"},
 					DefaultConfig: map[string]any{
 						"baseUrl":     "https://api.example.com",
 						"bearerToken": "{{secret.api_token}}",

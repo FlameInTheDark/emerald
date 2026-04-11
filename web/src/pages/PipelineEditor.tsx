@@ -43,6 +43,8 @@ import { usePipelineDraftHistory, type PipelineDraftState } from '../hooks/usePi
 import { useNodeDefinitions } from '../hooks/useNodeDefinitions'
 import { cn } from '../lib/utils'
 import type { EditorAssistantExecutionLogAttachment, ExecutionDetail, FlowDefinitionDocument, LLMProvider, LivePipelineOperation, NodeExecutionLogData, NodeTypeDefinition, Pipeline, PipelineRunResponse, NodeType, TemplateSummary } from '../types'
+import LucideIcon from '../components/ui/LucideIcon'
+import type { NodeMenuGroup } from '../components/flow/nodeTypes'
 
 const nodeTypes = {
   emerald: AutomatorNode,
@@ -77,55 +79,12 @@ const toolEdgeOptions = {
   },
 }
 
-const nodeMenuIconMap: Record<string, React.ElementType> = {
-  zap: Zap,
-  clock: Clock,
-  webhook: Webhook,
-  'message-square': MessageSquare,
-  play: Play,
-  square: Square,
-  copy: Copy,
-  globe: Globe,
-  link: Link,
-  code: Code,
-  send: Send,
-  'git-branch': GitBranch,
-  split: Split,
-  brain: Brain,
-  bot: Bot,
-  workflow: Workflow,
-  list: List,
-  wrench: Wrench,
-  'refresh-cw': RefreshCw,
-  'trash-2': Trash2,
-  'corner-down-left': CornerDownLeft,
-}
-
 const categoryMenuIconMap: Record<string, React.ElementType> = {
   trigger: Zap,
   action: Play,
   tool: Wrench,
   logic: GitBranch,
   llm: Brain,
-}
-
-function isProxmoxNodeType(type: NodeType): boolean {
-  return [
-    'action:proxmox_list_nodes',
-    'action:proxmox_list_workloads',
-    'action:vm_start',
-    'action:vm_stop',
-    'action:vm_clone',
-    'tool:proxmox_list_nodes',
-    'tool:proxmox_list_workloads',
-    'tool:vm_start',
-    'tool:vm_stop',
-    'tool:vm_clone',
-  ].includes(type)
-}
-
-function isKubernetesNodeType(type: NodeType): boolean {
-  return type.includes(':kubernetes_')
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -1000,7 +959,7 @@ function PipelineEditor() {
   })
 
   const {
-    categories: nodeCategories,
+    menuCategories,
     map: nodeDefinitionMap,
   } = useNodeDefinitions()
 
@@ -2297,12 +2256,10 @@ function PipelineEditor() {
       nodeType: NodeTypeDefinition,
       contextLabel: string,
     ): ContextMenuItem => {
-      const Icon = nodeMenuIconMap[nodeType.icon] || Zap
-
       return {
         label: nodeType.label,
-        icon: <Icon className="w-3.5 h-3.5" style={{ color: nodeType.color }} />,
-        searchText: `${nodeType.label} ${nodeType.description} ${contextLabel}`,
+        icon: <LucideIcon name={nodeType.icon} fallbackName="zap" className="w-3.5 h-3.5" style={{ color: nodeType.color }} />,
+        searchText: `${nodeType.label} ${nodeType.description} ${contextLabel} ${(nodeType.menuPath || []).join(' ')}`,
         onClick: () => createNodeAtPosition(
           nodeType.type,
           nodeType.label,
@@ -2312,53 +2269,57 @@ function PipelineEditor() {
       }
     }
 
-    const buildProviderGroup = (
-      label: string,
-      Icon: React.ElementType,
-      color: string,
-      nodeTypes: NodeTypeDefinition[],
-      categoryLabel: string,
-    ): ContextMenuItem | null => {
-      if (nodeTypes.length === 0) {
-        return null
+    const menuGroupIconName = (categoryID: string, label: string): string => {
+      if ((categoryID === 'action' || categoryID === 'tool') && label === 'General') {
+        return 'workflow'
       }
+      if ((categoryID === 'action' || categoryID === 'tool') && label === 'Proxmox') {
+        return 'server'
+      }
+      if ((categoryID === 'action' || categoryID === 'tool') && label === 'Kubernetes') {
+        return 'shield'
+      }
+      return 'folder-tree'
+    }
+
+    const buildGroupItem = (
+      categoryID: string,
+      categoryLabel: string,
+      categoryColor: string,
+      group: NodeMenuGroup,
+      parentPath: string,
+    ): ContextMenuItem => {
+      const contextLabel = `${parentPath} ${group.label}`.trim()
 
       return {
-        label,
-        icon: <Icon className="w-3.5 h-3.5" style={{ color }} />,
-        searchText: `${label} ${categoryLabel} add node`,
-        children: nodeTypes.map((nodeType) => buildNodeItem(nodeType, `${categoryLabel} ${label}`)),
+        label: group.label,
+        icon: (
+          <LucideIcon
+            name={menuGroupIconName(categoryID, group.label)}
+            fallbackName="workflow"
+            className="w-3.5 h-3.5"
+            style={{ color: categoryColor }}
+          />
+        ),
+        searchText: `${group.label} ${categoryLabel} add node`,
+        children: [
+          ...group.groups.map((child) => buildGroupItem(categoryID, categoryLabel, categoryColor, child, contextLabel)),
+          ...group.types.map((nodeType) => buildNodeItem(nodeType, contextLabel)),
+        ],
       }
     }
 
-    const addNodeItems = nodeCategories.map((category) => {
+    const addNodeItems = menuCategories.map((category) => {
       const CategoryIcon = categoryMenuIconMap[category.id] || Zap
-
-      if (category.id === 'action' || category.id === 'tool') {
-        const generalTypes = category.types.filter((nodeType) => (
-          !isProxmoxNodeType(nodeType.type) && !isKubernetesNodeType(nodeType.type)
-        ))
-        const proxmoxTypes = category.types.filter((nodeType) => isProxmoxNodeType(nodeType.type))
-        const kubernetesTypes = category.types.filter((nodeType) => isKubernetesNodeType(nodeType.type))
-        const providerGroups = [
-          buildProviderGroup('General', Workflow, category.color, generalTypes, category.label),
-          buildProviderGroup('Proxmox', Server, category.color, proxmoxTypes, category.label),
-          buildProviderGroup('Kubernetes', Shield, category.color, kubernetesTypes, category.label),
-        ].filter((item): item is ContextMenuItem => item !== null)
-
-        return {
-          label: category.label,
-          icon: <CategoryIcon className="w-3.5 h-3.5" style={{ color: category.color }} />,
-          searchText: `${category.label} add node`,
-          children: providerGroups,
-        }
-      }
 
       return {
         label: category.label,
         icon: <CategoryIcon className="w-3.5 h-3.5" style={{ color: category.color }} />,
         searchText: `${category.label} add node`,
-        children: category.types.map((nodeType) => buildNodeItem(nodeType, category.label)),
+        children: [
+          ...category.groups.map((group) => buildGroupItem(category.id, category.label, category.color, group, category.label)),
+          ...category.types.map((nodeType) => buildNodeItem(nodeType, category.label)),
+        ],
       }
     })
 
@@ -2389,7 +2350,7 @@ function PipelineEditor() {
         onClick: handleRun,
       },
     ]
-  }, [createNodeAtPosition, handleRun, handleSave, nodeCategories, pasteCopiedSelectionAtClientPosition])
+  }, [createNodeAtPosition, handleRun, handleSave, menuCategories, pasteCopiedSelectionAtClientPosition])
 
   const duplicateActiveSelection = useCallback(() => {
     if (activeSelectionIds.length === 0) {

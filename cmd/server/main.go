@@ -6,8 +6,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
+
+	hplugin "github.com/hashicorp/go-plugin"
 
 	"github.com/FlameInTheDark/emerald/internal/api"
 	"github.com/FlameInTheDark/emerald/internal/auth"
@@ -29,6 +32,7 @@ import (
 	"github.com/FlameInTheDark/emerald/internal/shellcmd"
 	"github.com/FlameInTheDark/emerald/internal/skills"
 	"github.com/FlameInTheDark/emerald/internal/ws"
+	"github.com/FlameInTheDark/emerald/pkg/pluginapi"
 )
 
 func main() {
@@ -107,7 +111,15 @@ func main() {
 	if err := pluginManager.Refresh(context.Background()); err != nil {
 		log.Printf("failed to load plugins: %v", err)
 	}
-	defer pluginManager.Stop()
+
+	var pluginCleanupOnce sync.Once
+	cleanupPlugins := func() {
+		pluginCleanupOnce.Do(func() {
+			pluginManager.Stop()
+			hplugin.CleanupClients()
+		})
+	}
+	defer cleanupPlugins()
 
 	nodeDefinitionService := nodedefs.NewService(pluginManager)
 
@@ -285,22 +297,26 @@ func main() {
 		Pipelines: pipelineStore,
 		Runner:    pipelineInvoker,
 	})
-	for _, binding := range pluginManager.Bindings() {
-		nodeType := node.NodeType(binding.Type)
-		switch binding.Kind {
-		case "tool":
-			registry.Register(nodeType, &plugins.ToolExecutor{
-				Manager:  pluginManager,
-				NodeType: binding.Type,
-			})
-		default:
-			registry.Register(nodeType, &plugins.ActionExecutor{
-				Manager:  pluginManager,
-				NodeType: binding.Type,
-				Outputs:  binding.Spec.Outputs,
-			})
+	registry.SetDynamicResolver(func(nodeType node.NodeType) (node.NodeExecutor, bool) {
+		binding, ok := pluginManager.Binding(string(nodeType))
+		if !ok {
+			return nil, false
 		}
-	}
+
+		switch binding.Kind {
+		case pluginapi.NodeKindTool:
+			return &plugins.ToolExecutor{
+				Manager:  pluginManager,
+				NodeType: binding.Type,
+			}, true
+		default:
+			return &plugins.ActionExecutor{
+				Manager:  pluginManager,
+				NodeType: binding.Type,
+				Outputs:  append([]pluginapi.OutputHandle(nil), binding.Spec.Outputs...),
+			}, true
+		}
+	})
 
 	cronScheduler.Start()
 	defer cronScheduler.Stop()
@@ -329,17 +345,41 @@ func main() {
 		SecretStore:     secretStore,
 	})
 
+	serverErrCh := make(chan error, 1)
 	go func() {
-		if err := app.Listen(":" + cfg.Server.Port); err != nil {
-			log.Fatalf("server failed: %v", err)
-		}
+		serverErrCh <- app.Listen(":" + cfg.Server.Port)
 	}()
 
 	log.Printf("server started on port %s", cfg.Server.Port)
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
 
-	log.Println("shutting down server...")
+	select {
+	case <-signalCtx.Done():
+		log.Println("shutting down server...")
+	case err := <-serverErrCh:
+		if err != nil {
+			log.Printf("server failed: %v", err)
+		}
+		return
+	}
+
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelShutdown()
+
+	if err := app.ShutdownWithContext(shutdownCtx); err != nil {
+		log.Printf("failed to shutdown server cleanly: %v", err)
+	}
+
+	select {
+	case err := <-serverErrCh:
+		if err != nil {
+			log.Printf("server stopped with error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		log.Printf("timed out waiting for server listener to stop")
+	}
+
+	cleanupPlugins()
 }

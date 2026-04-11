@@ -2,9 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { Edge, Node } from '@xyflow/react'
 import {
-  X, Settings, Play, Square, Copy, Globe, Code, Zap, Clock, Webhook,
-  GitBranch, Split, Brain, Link, Plus, Trash2, MessageSquare, Send, RefreshCw,
-  Bot, Workflow, List, Wrench, CornerDownLeft, CircleHelp,
+  X, Settings, Plus, Trash2, CircleHelp,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { NODE_TYPE_MAP, getNodeColor, getNodeLabel } from './nodeTypes'
@@ -20,30 +18,7 @@ import LuaEditorModal from './LuaEditorModal'
 import HelpTooltip from '../ui/HelpTooltip'
 import KubernetesNodeConfigSection, { kubernetesNodeTypes } from './KubernetesNodeConfigSection'
 import { useNodeDefinitions } from '../../hooks/useNodeDefinitions'
-
-const iconMap: Record<string, React.ElementType> = {
-  zap: Zap,
-  clock: Clock,
-  webhook: Webhook,
-  'message-square': MessageSquare,
-  play: Play,
-  square: Square,
-  copy: Copy,
-  globe: Globe,
-  link: Link,
-  code: Code,
-  send: Send,
-  'git-branch': GitBranch,
-  split: Split,
-  brain: Brain,
-  bot: Bot,
-  workflow: Workflow,
-  list: List,
-  wrench: Wrench,
-  'refresh-cw': RefreshCw,
-  'trash-2': Trash2,
-  'corner-down-left': CornerDownLeft,
-}
+import LucideIcon from '../ui/LucideIcon'
 
 const proxmoxNodeTypes = new Set<NodeType>([
   'action:proxmox_list_nodes',
@@ -430,7 +405,6 @@ export default function NodeConfigPanel({
 
   const resolvedNodeType = typeof nodeType === 'string' ? nodeType : ''
   const nodeDef = resolvedNodeType ? (nodeDefinitionMap[resolvedNodeType] || NODE_TYPE_MAP[resolvedNodeType as NodeType]) : undefined
-  const Icon = iconMap[nodeDef?.icon || 'zap']
   const color = nodeDef?.color || getNodeColor(resolvedNodeType)
   const showClusterSelect = proxmoxNodeTypes.has(resolvedNodeType as NodeType)
   const showKubernetesClusterSelect = kubernetesNodeTypes.has(resolvedNodeType as NodeType)
@@ -627,7 +601,7 @@ export default function NodeConfigPanel({
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${color}20` }}>
-            <Icon className="w-4 h-4" style={{ color }} />
+            <LucideIcon name={nodeDef?.icon} fallbackName="zap" className="w-4 h-4" style={{ color }} />
           </div>
           <div>
             <p className="text-sm font-medium text-text">{nodeLabel}</p>

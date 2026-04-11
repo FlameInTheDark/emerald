@@ -63,6 +63,7 @@ type NodeSpec struct {
 	Description   string                 `json:"description,omitempty"`
 	Icon          string                 `json:"icon,omitempty"`
 	Color         string                 `json:"color,omitempty"`
+	MenuPath      []string               `json:"menu_path,omitempty"`
 	DefaultConfig map[string]any         `json:"default_config,omitempty"`
 	Fields        []FieldSpec            `json:"fields,omitempty"`
 	Outputs       []OutputHandle         `json:"outputs,omitempty"`

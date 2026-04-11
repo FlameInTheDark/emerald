@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Server, Shield, Brain, Bot, Plus, Trash2, Edit2, MessageSquare, Power, Users, Lock } from 'lucide-react'
+import { Server, Shield, Brain, Bot, Plus, Trash2, Edit2, MessageSquare, Power, Users, Lock, RefreshCw } from 'lucide-react'
 import { api } from '../api/client'
 import { Card, CardContent } from '../components/ui/Card'
 import Button from '../components/ui/Button'
@@ -335,6 +335,30 @@ function SecretsSettings() {
     },
   })
 
+  const refreshPluginsMutation = useMutation({
+    mutationFn: () => api.nodeDefinitions.refresh(),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['node-definitions'], data)
+      if (data.error) {
+        addToast({
+          type: 'warning',
+          title: 'Plugins rediscovered with issues',
+          message: data.error,
+        })
+        return
+      }
+
+      addToast({
+        type: 'success',
+        title: 'Plugins rediscovered',
+        message: 'Emerald reloaded local plugin bundles without a restart.',
+      })
+    },
+    onError: (err) => {
+      addToast({ type: 'error', title: 'Failed to rediscover plugins', message: err.message })
+    },
+  })
+
   function resetForm() {
     setShowForm(false)
     setEditingSecretId(null)
@@ -553,11 +577,21 @@ function SecretsSettings() {
 
       <Card>
         <CardContent className="space-y-4 pt-6">
-          <div>
-            <h3 className="text-base font-semibold text-text">Installed Plugin Bundles</h3>
-            <p className="mt-1 text-sm text-text-muted">
-              Emerald discovers local plugin bundles and surfaces their health here so missing or broken nodes are easier to spot.
-            </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-base font-semibold text-text">Installed Plugin Bundles</h3>
+              <p className="mt-1 text-sm text-text-muted">
+                Emerald discovers local plugin bundles and surfaces their health here so missing or broken nodes are easier to spot.
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => refreshPluginsMutation.mutate()}
+              loading={refreshPluginsMutation.isPending}
+            >
+              <RefreshCw className="w-4 h-4" />
+              Rediscover Plugins
+            </Button>
           </div>
 
           {arePluginsLoading && (

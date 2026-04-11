@@ -133,3 +133,43 @@ func TestServiceValidateDefinitionAllowsDeclaredPluginOutputHandle(t *testing.T)
 		t.Fatalf("expected declared output handle to validate, got %v", err)
 	}
 }
+
+func TestBuiltinDefinitionsApplyDefaultMenuPaths(t *testing.T) {
+	t.Parallel()
+
+	definitions := BuiltinDefinitions()
+	byType := make(map[string]Definition, len(definitions))
+	for _, definition := range definitions {
+		byType[definition.Type] = definition
+	}
+
+	if got := byType["action:http"].MenuPath; len(got) != 1 || got[0] != "General" {
+		t.Fatalf("expected action:http menu path to be [General], got %#v", got)
+	}
+	if got := byType["action:proxmox_list_nodes"].MenuPath; len(got) != 1 || got[0] != "Proxmox" {
+		t.Fatalf("expected proxmox menu path to be [Proxmox], got %#v", got)
+	}
+	if got := byType["tool:kubernetes_pod_logs"].MenuPath; len(got) != 1 || got[0] != "Kubernetes" {
+		t.Fatalf("expected kubernetes menu path to be [Kubernetes], got %#v", got)
+	}
+}
+
+func TestPluginDefinitionFromBindingUsesConfiguredMenuPath(t *testing.T) {
+	t.Parallel()
+
+	definition := pluginDefinitionFromBinding(anyBinding{
+		Type:       "action:plugin/acme/request",
+		PluginID:   "acme",
+		PluginName: "Acme Service",
+		Spec: pluginapi.NodeSpec{
+			ID:       "request",
+			Kind:     pluginapi.NodeKindAction,
+			Label:    "Acme Request",
+			MenuPath: []string{"Acme Service", "Requests"},
+		},
+	})
+
+	if len(definition.MenuPath) != 2 || definition.MenuPath[0] != "Acme Service" || definition.MenuPath[1] != "Requests" {
+		t.Fatalf("expected configured plugin menu path to be preserved, got %#v", definition.MenuPath)
+	}
+}

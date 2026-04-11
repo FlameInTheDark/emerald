@@ -106,8 +106,11 @@ type ToolNodeExecutor interface {
 	ExecuteTool(ctx context.Context, config json.RawMessage, args json.RawMessage, input map[string]any) (any, error)
 }
 
+type DynamicResolver func(nodeType NodeType) (NodeExecutor, bool)
+
 type Registry struct {
-	executors map[NodeType]NodeExecutor
+	executors       map[NodeType]NodeExecutor
+	dynamicResolver DynamicResolver
 }
 
 func NewRegistry() *Registry {
@@ -120,9 +123,18 @@ func (r *Registry) Register(nodeType NodeType, executor NodeExecutor) {
 	r.executors[nodeType] = executor
 }
 
+func (r *Registry) SetDynamicResolver(resolver DynamicResolver) {
+	r.dynamicResolver = resolver
+}
+
 func (r *Registry) Get(nodeType NodeType) (NodeExecutor, error) {
 	exec, ok := r.executors[nodeType]
 	if !ok {
+		if r.dynamicResolver != nil {
+			if dynamicExec, dynamicOK := r.dynamicResolver(nodeType); dynamicOK {
+				return dynamicExec, nil
+			}
+		}
 		return nil, fmt.Errorf("unknown node type: %s", nodeType)
 	}
 	return exec, nil

@@ -27,6 +27,7 @@ type Definition struct {
 	Description   string                   `json:"description,omitempty"`
 	Icon          string                   `json:"icon,omitempty"`
 	Color         string                   `json:"color,omitempty"`
+	MenuPath      []string                 `json:"menu_path,omitempty"`
 	DefaultConfig map[string]any           `json:"default_config,omitempty"`
 	Fields        []pluginapi.FieldSpec    `json:"fields,omitempty"`
 	Outputs       []pluginapi.OutputHandle `json:"outputs,omitempty"`
@@ -93,6 +94,13 @@ func (s *Service) PluginStatuses() []plugins.BundleStatus {
 		return nil
 	}
 	return s.pluginManager.Statuses()
+}
+
+func (s *Service) RefreshPlugins(ctx context.Context) error {
+	if s == nil || s.pluginManager == nil {
+		return nil
+	}
+	return s.pluginManager.Refresh(ctx)
 }
 
 func (s *Service) Get(nodeType string) (Definition, bool) {

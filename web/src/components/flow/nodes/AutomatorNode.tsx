@@ -3,39 +3,9 @@ import { Handle, NodeResizeControl, Position, ResizeControlVariant } from '@xyfl
 import { getNodeColor, getNodeLabel, getNodeIcon } from '../nodeTypes'
 import { getNodeBorderTint, getNodeStatusColor, resolveGroupColor, withAlpha } from '../nodeAppearance'
 import type { NodeDefinitionOutputHandle, NodeExecutionLogData, NodeType } from '../../../types'
-import {
-  Zap, Clock, Webhook, Play, Square, Copy, Globe, Code,
-  GitBranch, Split, Brain, Circle, Power, Timer, Link, FileText, MessageSquare, Send, RefreshCw,
-  Bot, Workflow, List, Wrench, CornerDownLeft, Trash2,
-} from 'lucide-react'
+import { FileText } from 'lucide-react'
 import { cn } from '../../../lib/utils'
-
-const iconMap: Record<string, React.ElementType> = {
-  zap: Zap,
-  clock: Clock,
-  webhook: Webhook,
-  'message-square': MessageSquare,
-  play: Play,
-  square: Square,
-  copy: Copy,
-  globe: Globe,
-  code: Code,
-  send: Send,
-  'git-branch': GitBranch,
-  split: Split,
-  brain: Brain,
-  bot: Bot,
-  workflow: Workflow,
-  list: List,
-  wrench: Wrench,
-  'refresh-cw': RefreshCw,
-  'trash-2': Trash2,
-  'corner-down-left': CornerDownLeft,
-  circle: Circle,
-  power: Power,
-  timer: Timer,
-  link: Link,
-}
+import LucideIcon from '../../ui/LucideIcon'
 
 interface AutomatorNodeData {
   label?: string
@@ -99,7 +69,6 @@ function AutomatorNode({ data, selected }: { data: AutomatorNodeData; selected: 
   const color = data.color || getNodeColor(nodeType)
   const label = data.label || getNodeLabel(nodeType)
   const iconName = data.icon || getNodeIcon(nodeType)
-  const Icon = iconMap[iconName] || Circle
   const isEnabled = data.enabled !== false
   const isHighlight = data.isHighlight === true
 
@@ -153,7 +122,7 @@ function AutomatorNode({ data, selected }: { data: AutomatorNodeData; selected: 
             backgroundColor: withAlpha(groupColor, '24'),
           }}
         >
-          <Icon className="h-3.5 w-3.5 flex-shrink-0" style={{ color: groupColor }} />
+          <LucideIcon name={iconName} fallbackName="circle" className="h-3.5 w-3.5 flex-shrink-0" style={{ color: groupColor }} />
           <span className="truncate text-xs font-semibold uppercase tracking-[0.08em] text-text">
             {label}
           </span>
@@ -227,7 +196,12 @@ function AutomatorNode({ data, selected }: { data: AutomatorNodeData; selected: 
           'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg',
           isHighlight && 'animate-pulse',
         )} style={{ backgroundColor: isHighlight ? `${highlightColor}20` : `${color}20` }}>
-          <Icon className="w-4 h-4" style={{ color: isHighlight ? highlightColor : color }} />
+          <LucideIcon
+            name={iconName}
+            fallbackName="circle"
+            className="w-4 h-4"
+            style={{ color: isHighlight ? highlightColor : color }}
+          />
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-text">{label}</p>

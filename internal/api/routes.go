@@ -136,6 +136,7 @@ func New(cfg Config) *fiber.App {
 
 	api.Get("/dashboard/stats", dashboardHandler.Stats)
 	api.Get("/node-definitions", nodeDefinitionsHandler.List)
+	api.Post("/node-definitions/refresh", nodeDefinitionsHandler.Refresh)
 
 	clusters := api.Group("/clusters")
 	clusters.Get("/", clusterHandler.List)
