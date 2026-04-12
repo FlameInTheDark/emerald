@@ -173,6 +173,19 @@ func (r *broadcastRecorder) hasMessageType(messageType string) bool {
 	return false
 }
 
+func (r *broadcastRecorder) firstMessageByType(messageType string) map[string]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, message := range r.messages {
+		if message["type"] == messageType {
+			return message
+		}
+	}
+
+	return nil
+}
+
 func TestExecutionRunner_CancelTracksActiveExecution(t *testing.T) {
 	registry := node.NewRegistry()
 	executor := &blockingExecutor{started: make(chan struct{}, 1)}
@@ -409,7 +422,7 @@ func TestExecutionRunner_RuntimeSecretsOverrideReservedContextWithoutPersistingV
 	}
 
 	nodeExecution := store.nodeExecutions["node-next"]
-	if nodeExecution == nil || nodeExecution.Output == nil {
+	if nodeExecution == nil || nodeExecution.Output == nil || nodeExecution.Input == nil {
 		t.Fatalf("expected node output to be stored, got %#v", nodeExecution)
 	}
 
@@ -418,14 +431,77 @@ func TestExecutionRunner_RuntimeSecretsOverrideReservedContextWithoutPersistingV
 		t.Fatalf("unmarshal node output: %v", err)
 	}
 
-	secretPayload, ok := output["secret"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected output.secret map, got %#v", output["secret"])
+	var inputPayload map[string]any
+	if err := json.Unmarshal([]byte(*nodeExecution.Input), &inputPayload); err != nil {
+		t.Fatalf("unmarshal node input: %v", err)
 	}
-	if got := secretPayload["db_password"]; got != "vault-secret" {
-		t.Fatalf("output.secret.db_password = %#v, want vault-secret", got)
+
+	if _, ok := inputPayload["secret"]; ok {
+		t.Fatalf("expected node input to omit reserved secret key, got %#v", inputPayload["secret"])
+	}
+	if _, ok := output["secret"]; ok {
+		t.Fatalf("expected node output to omit reserved secret key, got %#v", output["secret"])
 	}
 	if got := output["requestId"]; got != "req-1" {
 		t.Fatalf("output.requestId = %#v, want req-1", got)
+	}
+	if strings.Contains(*nodeExecution.Input, "vault-secret") || strings.Contains(*nodeExecution.Output, "vault-secret") {
+		t.Fatalf("expected stored node execution artifacts to redact runtime secrets, got input=%s output=%s", *nodeExecution.Input, *nodeExecution.Output)
+	}
+}
+
+func TestExecutionRunner_BroadcastsNodeInputOnStartAndCompletion(t *testing.T) {
+	t.Parallel()
+
+	registry := node.NewRegistry()
+	registry.Register("test:next", &runnerPassthroughExecutor{})
+
+	engine := NewEngine(registry)
+	store := newTestExecutionStore()
+	broadcaster := &broadcastRecorder{}
+	runner := NewExecutionRunner(store, engine, broadcaster)
+
+	flowData := FlowData{
+		Nodes: []FlowNode{
+			{ID: "next", Type: "test:next"},
+		},
+	}
+
+	if _, err := runner.Run(context.Background(), "pipeline-1", flowData, "manual", map[string]any{
+		"requestId": "req-1",
+		"count":     3,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	nodeStarted := broadcaster.firstMessageByType("node_started")
+	if nodeStarted == nil {
+		t.Fatal("expected node_started broadcast")
+	}
+	nodeCompleted := broadcaster.firstMessageByType("node_completed")
+	if nodeCompleted == nil {
+		t.Fatal("expected node_completed broadcast")
+	}
+
+	for messageType, payload := range map[string]map[string]any{
+		"node_started":   nodeStarted,
+		"node_completed": nodeCompleted,
+	} {
+		rawInput, ok := payload["input"].(string)
+		if !ok || rawInput == "" {
+			t.Fatalf("%s input = %#v, want serialized JSON", messageType, payload["input"])
+		}
+
+		var input map[string]any
+		if err := json.Unmarshal([]byte(rawInput), &input); err != nil {
+			t.Fatalf("unmarshal %s input: %v", messageType, err)
+		}
+
+		if got := input["requestId"]; got != "req-1" {
+			t.Fatalf("%s input.requestId = %#v, want req-1", messageType, got)
+		}
+		if got := input["count"]; got != float64(3) {
+			t.Fatalf("%s input.count = %#v, want 3", messageType, got)
+		}
 	}
 }

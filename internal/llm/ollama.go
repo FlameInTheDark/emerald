@@ -19,23 +19,38 @@ type OllamaProvider struct {
 }
 
 type ollamaRequest struct {
-	Model    string         `json:"model"`
-	Messages []Message      `json:"messages"`
-	Stream   bool           `json:"stream"`
-	Tools    []any          `json:"tools,omitempty"`
-	Options  map[string]any `json:"options,omitempty"`
+	Model    string          `json:"model"`
+	Messages []ollamaMessage `json:"messages"`
+	Stream   bool            `json:"stream"`
+	Tools    []any           `json:"tools,omitempty"`
+	Options  map[string]any  `json:"options,omitempty"`
+}
+
+type ollamaMessage struct {
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCalls  []ollamaToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Name       string           `json:"name,omitempty"`
+}
+
+type ollamaToolCall struct {
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type,omitempty"`
+	Function ollamaToolFunction `json:"function"`
+}
+
+type ollamaToolFunction struct {
+	Name      string `json:"name"`
+	Arguments any    `json:"arguments,omitempty"`
 }
 
 type ollamaResponse struct {
-	Message struct {
-		Role      string     `json:"role"`
-		Content   string     `json:"content"`
-		ToolCalls []ToolCall `json:"tool_calls"`
-	} `json:"message"`
-	Done            bool   `json:"done"`
-	PromptEvalCount int    `json:"prompt_eval_count"`
-	EvalCount       int    `json:"eval_count"`
-	DoneReason      string `json:"done_reason"`
+	Message         ollamaMessage `json:"message"`
+	Done            bool          `json:"done"`
+	PromptEvalCount int           `json:"prompt_eval_count"`
+	EvalCount       int           `json:"eval_count"`
+	DoneReason      string        `json:"done_reason"`
 }
 
 func NewOllamaProvider(cfg Config) (*OllamaProvider, error) {
@@ -98,7 +113,7 @@ func (p *OllamaProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 
 	return &ChatResponse{
 		Content:   apiResp.Message.Content,
-		ToolCalls: apiResp.Message.ToolCalls,
+		ToolCalls: parseOllamaToolCalls(apiResp.Message.ToolCalls),
 		Usage: Usage{
 			PromptTokens:     apiResp.PromptEvalCount,
 			CompletionTokens: apiResp.EvalCount,
@@ -167,7 +182,7 @@ func (p *OllamaProvider) ChatStream(ctx context.Context, req ChatRequest, handle
 		}
 
 		if len(chunk.Message.ToolCalls) > 0 {
-			toolCalls = chunk.Message.ToolCalls
+			toolCalls = parseOllamaToolCalls(chunk.Message.ToolCalls)
 		}
 
 		if chunk.PromptEvalCount > 0 || chunk.EvalCount > 0 {
@@ -202,7 +217,7 @@ func (p *OllamaProvider) ChatStream(ctx context.Context, req ChatRequest, handle
 func buildOllamaRequest(req ChatRequest, stream bool) ollamaRequest {
 	apiReq := ollamaRequest{
 		Model:    req.Model,
-		Messages: req.Messages,
+		Messages: buildOllamaMessages(req.Messages),
 		Stream:   stream,
 	}
 
@@ -215,4 +230,121 @@ func buildOllamaRequest(req ChatRequest, stream bool) ollamaRequest {
 	}
 
 	return apiReq
+}
+
+func buildOllamaMessages(messages []Message) []ollamaMessage {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	converted := make([]ollamaMessage, 0, len(messages))
+	for _, message := range messages {
+		ollamaMessage := ollamaMessage{
+			Role:       message.Role,
+			Content:    message.Content,
+			ToolCallID: message.ToolCallID,
+			Name:       message.Name,
+		}
+		if len(message.ToolCalls) > 0 {
+			ollamaMessage.ToolCalls = buildOllamaToolCalls(message.ToolCalls)
+		}
+		converted = append(converted, ollamaMessage)
+	}
+
+	return converted
+}
+
+func buildOllamaToolCalls(toolCalls []ToolCall) []ollamaToolCall {
+	if len(toolCalls) == 0 {
+		return nil
+	}
+
+	converted := make([]ollamaToolCall, 0, len(toolCalls))
+	for _, toolCall := range toolCalls {
+		ollamaToolCall := ollamaToolCall{
+			ID:   toolCall.ID,
+			Type: toolCall.Type,
+			Function: ollamaToolFunction{
+				Name: toolCall.Function.Name,
+			},
+		}
+
+		if arguments := decodeOllamaToolArguments(toolCall.Function.Arguments); arguments != nil {
+			ollamaToolCall.Function.Arguments = arguments
+		}
+
+		converted = append(converted, ollamaToolCall)
+	}
+
+	return converted
+}
+
+func parseOllamaToolCalls(toolCalls []ollamaToolCall) []ToolCall {
+	if len(toolCalls) == 0 {
+		return nil
+	}
+
+	converted := make([]ToolCall, 0, len(toolCalls))
+	for index, toolCall := range toolCalls {
+		id := strings.TrimSpace(toolCall.ID)
+		if id == "" {
+			id = fmt.Sprintf("tool-call-%d", index+1)
+		}
+
+		toolType := strings.TrimSpace(toolCall.Type)
+		if toolType == "" {
+			toolType = "function"
+		}
+
+		converted = append(converted, ToolCall{
+			ID:   id,
+			Type: toolType,
+			Function: ToolFunction{
+				Name:      toolCall.Function.Name,
+				Arguments: encodeOllamaToolArguments(toolCall.Function.Arguments),
+			},
+		})
+	}
+
+	return converted
+}
+
+func decodeOllamaToolArguments(raw string) any {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+
+	var decoded any
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
+		return decoded
+	}
+
+	return raw
+}
+
+func encodeOllamaToolArguments(arguments any) string {
+	switch value := arguments.(type) {
+	case nil:
+		return ""
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return ""
+		}
+		if json.Valid([]byte(trimmed)) {
+			return trimmed
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return value
+		}
+		return string(encoded)
+	default:
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return ""
+		}
+		return string(encoded)
+	}
 }

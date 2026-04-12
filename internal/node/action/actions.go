@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -503,16 +505,11 @@ func (e *HTTPAction) Execute(ctx context.Context, config json.RawMessage, input 
 		return nil, fmt.Errorf("read response body: %w", err)
 	}
 
-	var respData any
-	if len(respBody) > 0 {
-		_ = json.Unmarshal(respBody, &respData)
-	}
-
 	output := map[string]any{
 		"status_code": resp.StatusCode,
 		"url":         cfg.URL,
 		"method":      cfg.Method,
-		"response":    respData,
+		"response":    parseHTTPResponseBody(respBody, resp.Header.Get("Content-Type")),
 	}
 	data, _ := json.Marshal(output)
 	return &node.NodeResult{Output: data}, nil
@@ -527,6 +524,169 @@ func (e *HTTPAction) Validate(config json.RawMessage) error {
 		return fmt.Errorf("url is required")
 	}
 	return nil
+}
+
+func parseHTTPResponseBody(respBody []byte, contentType string) any {
+	trimmed := bytes.TrimSpace(respBody)
+	if len(trimmed) == 0 {
+		return nil
+	}
+
+	var decoded any
+	if err := json.Unmarshal(trimmed, &decoded); err == nil {
+		return decoded
+	}
+
+	mediaType := normalizeHTTPContentType(contentType)
+	if isHTMLContentType(mediaType) {
+		return string(respBody)
+	}
+
+	if isXMLContentType(mediaType) || looksLikeXML(trimmed) {
+		if decodedXML, err := parseXMLResponseBody(trimmed); err == nil {
+			return decodedXML
+		}
+	}
+
+	return string(respBody)
+}
+
+func normalizeHTTPContentType(contentType string) string {
+	if strings.TrimSpace(contentType) == "" {
+		return ""
+	}
+
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err == nil {
+		return strings.ToLower(strings.TrimSpace(mediaType))
+	}
+
+	return strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+}
+
+func isHTMLContentType(contentType string) bool {
+	return contentType == "text/html"
+}
+
+func isXMLContentType(contentType string) bool {
+	return contentType == "application/xml" || contentType == "text/xml" || strings.HasSuffix(contentType, "+xml")
+}
+
+func looksLikeXML(respBody []byte) bool {
+	lower := bytes.ToLower(bytes.TrimSpace(respBody))
+	if !bytes.HasPrefix(lower, []byte("<")) {
+		return false
+	}
+	if bytes.HasPrefix(lower, []byte("<!doctype html")) || bytes.HasPrefix(lower, []byte("<html")) {
+		return false
+	}
+	return true
+}
+
+type xmlResponseElement struct {
+	name     string
+	attrs    map[string]string
+	children map[string][]any
+	text     []string
+}
+
+func (e *xmlResponseElement) addChild(name string, value any) {
+	if e.children == nil {
+		e.children = make(map[string][]any)
+	}
+	e.children[name] = append(e.children[name], value)
+}
+
+func (e *xmlResponseElement) addText(value string) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return
+	}
+	e.text = append(e.text, trimmed)
+}
+
+func (e *xmlResponseElement) value() any {
+	text := strings.Join(e.text, " ")
+	if len(e.attrs) == 0 && len(e.children) == 0 {
+		if text == "" {
+			return ""
+		}
+		return text
+	}
+
+	result := make(map[string]any, len(e.attrs)+len(e.children)+1)
+	for key, value := range e.attrs {
+		result["@"+key] = value
+	}
+	for key, values := range e.children {
+		if len(values) == 1 {
+			result[key] = values[0]
+			continue
+		}
+		result[key] = values
+	}
+	if text != "" {
+		result["#text"] = text
+	}
+
+	return result
+}
+
+func parseXMLResponseBody(respBody []byte) (map[string]any, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(respBody))
+	stack := make([]*xmlResponseElement, 0, 8)
+	var root *xmlResponseElement
+
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		switch current := token.(type) {
+		case xml.StartElement:
+			element := &xmlResponseElement{name: current.Name.Local}
+			if len(current.Attr) > 0 {
+				element.attrs = make(map[string]string, len(current.Attr))
+				for _, attr := range current.Attr {
+					element.attrs[attr.Name.Local] = attr.Value
+				}
+			}
+			stack = append(stack, element)
+		case xml.EndElement:
+			if len(stack) == 0 {
+				return nil, fmt.Errorf("xml response has unexpected closing tag %q", current.Name.Local)
+			}
+
+			element := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+
+			if len(stack) == 0 {
+				root = element
+				continue
+			}
+
+			parent := stack[len(stack)-1]
+			parent.addChild(element.name, element.value())
+		case xml.CharData:
+			if len(stack) == 0 {
+				continue
+			}
+			stack[len(stack)-1].addText(string(current))
+		}
+	}
+
+	if root == nil {
+		return nil, fmt.Errorf("xml response does not contain a root element")
+	}
+	if len(stack) != 0 {
+		return nil, fmt.Errorf("xml response ended before all elements were closed")
+	}
+
+	return map[string]any{root.name: root.value()}, nil
 }
 
 type ShellCommandAction struct {

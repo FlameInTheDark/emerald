@@ -72,7 +72,7 @@ func (h *PipelineRunHandler) Run(c *fiber.Ctx) error {
 	}
 	if result.Returned {
 		response["returned"] = true
-		response["return_value"] = result.ReturnValue
+		response["return_value"] = pipeline.SanitizeExecutionValue(result.ReturnValue)
 	}
 
 	return c.JSON(response)
@@ -117,6 +117,9 @@ func (h *ExecutionHandler) Get(c *fiber.Ctx) error {
 		log.Printf("failed to list node executions: %v", err)
 		nodeExecutions = make([]models.NodeExecution, 0)
 	}
+
+	execution = sanitizeExecutionModel(execution)
+	sanitizeNodeExecutionModels(nodeExecutions)
 
 	return c.JSON(fiber.Map{
 		"execution":       execution,
@@ -213,4 +216,31 @@ func copyToolExecutionInput(input map[string]any) map[string]any {
 	}
 
 	return result
+}
+
+func sanitizeExecutionModel(execution *models.Execution) *models.Execution {
+	if execution == nil {
+		return nil
+	}
+
+	sanitized := *execution
+	if execution.Context != nil {
+		context := pipeline.SanitizeExecutionJSONString(*execution.Context)
+		sanitized.Context = &context
+	}
+
+	return &sanitized
+}
+
+func sanitizeNodeExecutionModels(nodeExecutions []models.NodeExecution) {
+	for index := range nodeExecutions {
+		if nodeExecutions[index].Input != nil {
+			input := pipeline.SanitizeExecutionJSONString(*nodeExecutions[index].Input)
+			nodeExecutions[index].Input = &input
+		}
+		if nodeExecutions[index].Output != nil {
+			output := pipeline.SanitizeExecutionJSONString(*nodeExecutions[index].Output)
+			nodeExecutions[index].Output = &output
+		}
+	}
 }

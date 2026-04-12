@@ -603,7 +603,7 @@ func buildRunPipelineOutput(result *pipeline.RunResult) map[string]any {
 		"returned":      result.Returned,
 	}
 	if result.Returned {
-		output["return_value"] = result.ReturnValue
+		output["return_value"] = pipeline.SanitizeExecutionValue(result.ReturnValue)
 	}
 
 	return output

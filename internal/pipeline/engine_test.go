@@ -75,6 +75,32 @@ func (e *templateExecutor) Validate(config json.RawMessage) error {
 	return nil
 }
 
+type secretTemplateExecutor struct {
+	rendered string
+}
+
+func (e *secretTemplateExecutor) Execute(ctx context.Context, config json.RawMessage, input map[string]any) (*node.NodeResult, error) {
+	rendered, err := templating.RenderStringWithContext(ctx, "{{input.secret.api_token}}", input)
+	if err != nil {
+		return nil, err
+	}
+	e.rendered = rendered
+
+	data, err := json.Marshal(map[string]any{
+		"rendered": rendered,
+		"input":    input,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &node.NodeResult{Output: data}, nil
+}
+
+func (e *secretTemplateExecutor) Validate(config json.RawMessage) error {
+	return nil
+}
+
 func TestEngine_Execute_SingleNode(t *testing.T) {
 	registry := node.NewRegistry()
 	registry.Register("test:node", &testExecutor{output: map[string]any{"result": "ok"}})
@@ -418,6 +444,60 @@ func TestEngine_Execute_AllowsTemplatesToReferenceCompletedNodeOutputsByID(t *te
 
 	if output["rendered"] != "Code 202 / Input 202" {
 		t.Fatalf("rendered = %#v, want %q", output["rendered"], "Code 202 / Input 202")
+	}
+}
+
+func TestEngine_Execute_KeepsRuntimeSecretsAvailableToTemplatesButSanitizesRecordedArtifacts(t *testing.T) {
+	registry := node.NewRegistry()
+	executor := &secretTemplateExecutor{}
+	registry.Register("test:secret-template", executor)
+
+	engine := pipeline.NewEngine(registry)
+
+	flowData := pipeline.FlowData{
+		Nodes: []pipeline.FlowNode{
+			{ID: "consumer", Type: "test:secret-template"},
+		},
+	}
+
+	state, err := engine.ExecuteWithInput(context.Background(), flowData, "manual", map[string]any{
+		"secret": map[string]any{
+			"api_token": "Token",
+		},
+		"requestId": "req-1",
+	})
+	if err != nil {
+		t.Fatalf("ExecuteWithInput() error = %v", err)
+	}
+
+	if executor.rendered != "Token" {
+		t.Fatalf("template rendering should still see runtime secret, got %q", executor.rendered)
+	}
+
+	if _, ok := state.NodeRuns[0].Input["secret"]; ok {
+		t.Fatalf("expected recorded node input to omit reserved secret key, got %#v", state.NodeRuns[0].Input["secret"])
+	}
+
+	result := state.NodeResults["consumer"]
+	if result == nil {
+		t.Fatal("expected consumer result")
+	}
+
+	var output map[string]any
+	if err := json.Unmarshal(result.Output, &output); err != nil {
+		t.Fatalf("unmarshal consumer output: %v", err)
+	}
+
+	if output["rendered"] != "[REDACTED]" {
+		t.Fatalf("recorded rendered output = %#v, want %q", output["rendered"], "[REDACTED]")
+	}
+
+	recordedInput, ok := output["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("recorded input payload missing or wrong type: %#v", output["input"])
+	}
+	if _, ok := recordedInput["secret"]; ok {
+		t.Fatalf("expected recorded nested input to omit reserved secret key, got %#v", recordedInput["secret"])
 	}
 }
 

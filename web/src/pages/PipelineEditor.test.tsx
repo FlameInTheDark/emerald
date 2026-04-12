@@ -10,6 +10,7 @@ import type { Pipeline } from '../types'
 
 const {
   blockerStore,
+  executionLogState,
   mockApi,
   reactFlowApi,
   reactFlowState,
@@ -31,6 +32,9 @@ const {
         listeners.add(listener)
         return () => listeners.delete(listener)
       },
+    },
+    executionLogState: {
+      onRealtimeStatusChange: null as null | ((isReady: boolean) => void),
     },
     reactFlowApi: {
       screenToFlowPosition: vi.fn((point: { x: number; y: number }) => point),
@@ -234,7 +238,21 @@ vi.mock('../components/flow/NodeConfigPanel', () => ({
 }))
 
 vi.mock('../components/flow/ExecutionLog', () => ({
-  default: () => <div data-testid="execution-log" />,
+  default: ({
+    onRealtimeStatusChange,
+  }: {
+    onRealtimeStatusChange?: (isReady: boolean) => void
+  }) => {
+    executionLogState.onRealtimeStatusChange = onRealtimeStatusChange ?? null
+
+    return (
+      <div data-testid="execution-log">
+        <button type="button" onClick={() => onRealtimeStatusChange?.(true)}>
+          Execution log ready
+        </button>
+      </div>
+    )
+  },
 }))
 
 vi.mock('../components/flow/NodeExecutionModal', () => ({
@@ -272,6 +290,7 @@ describe('PipelineEditor', () => {
     reactFlowApi.zoomIn.mockResolvedValue(undefined)
     reactFlowApi.zoomOut.mockResolvedValue(undefined)
     reactFlowApi.fitView.mockResolvedValue(undefined)
+    executionLogState.onRealtimeStatusChange = null
     reactFlowState.latestNodes = []
     reactFlowState.latestOnNodesChange = null
 
@@ -556,6 +575,22 @@ describe('PipelineEditor', () => {
 
     expect(preventDefault).toHaveBeenCalled()
     expect(event.returnValue).toBe('')
+  })
+
+  it('waits for execution log realtime readiness before starting a run', async () => {
+    const user = userEvent.setup()
+    renderEditor()
+
+    expect(await screen.findByRole('button', { name: 'Node Start' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Run' }))
+
+    expect(await screen.findByTestId('execution-log')).toBeInTheDocument()
+    expect(mockApi.pipelines.run).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Execution log ready' }))
+
+    await waitFor(() => expect(mockApi.pipelines.run).toHaveBeenCalledTimes(1))
   })
 })
 

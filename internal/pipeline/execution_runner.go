@@ -173,6 +173,7 @@ func (r *ExecutionRunner) Run(
 				"execution":  execution.ID,
 				"node_id":    ne.NodeID,
 				"node_type":  ne.NodeType,
+				"input":      getOptionalString(ne.Input),
 				"status":     ne.Status,
 				"started_at": ne.StartedAt,
 			})
@@ -193,6 +194,7 @@ func (r *ExecutionRunner) Run(
 				"execution":    execution.ID,
 				"node_id":      ne.NodeID,
 				"node_type":    ne.NodeType,
+				"input":        getOptionalString(ne.Input),
 				"status":       ne.Status,
 				"error":        getOptionalString(ne.Error),
 				"output":       getOptionalString(ne.Output),

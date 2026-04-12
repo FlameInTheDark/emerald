@@ -29,6 +29,23 @@ func (s *stubPipelineRunner) Run(_ context.Context, pipelineID string, input map
 	}, nil
 }
 
+type stubSecretReturningPipelineRunner struct{}
+
+func (s *stubSecretReturningPipelineRunner) Run(_ context.Context, pipelineID string, input map[string]any) (*pipeline.RunResult, error) {
+	return &pipeline.RunResult{
+		ExecutionID: "exec-1",
+		PipelineID:  pipelineID,
+		Status:      "completed",
+		Returned:    true,
+		ReturnValue: map[string]any{
+			"requestId": "req-1",
+			"secret": map[string]any{
+				"api_token": "Token",
+			},
+		},
+	}, nil
+}
+
 type stubPipelineCatalog struct {
 	byID map[string]*models.Pipeline
 }
@@ -165,6 +182,36 @@ func TestPipelineRunToolExecuteInjectsConfiguredArguments(t *testing.T) {
 	}
 	if !reflect.DeepEqual(runner.input, wantInput) {
 		t.Fatalf("runner input = %#v, want %#v", runner.input, wantInput)
+	}
+}
+
+func TestPipelineRunToolExecuteRedactsReturnedSecrets(t *testing.T) {
+	t.Parallel()
+
+	executor := &PipelineRunToolNode{Runner: &stubSecretReturningPipelineRunner{}}
+	config, err := json.Marshal(runPipelineConfig{
+		PipelineID: "pipe-123",
+	})
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+
+	result, err := executor.ExecuteTool(context.Background(), config, json.RawMessage(`{"params":{"requestId":"req-1"}}`), nil)
+	if err != nil {
+		t.Fatalf("execute tool: %v", err)
+	}
+
+	output, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("tool result has unexpected type %T", result)
+	}
+
+	returnValue, ok := output["return_value"].(map[string]any)
+	if !ok {
+		t.Fatalf("return_value missing or wrong type: %#v", output["return_value"])
+	}
+	if _, ok := returnValue["secret"]; ok {
+		t.Fatalf("expected return_value.secret to be redacted, got %#v", returnValue["secret"])
 	}
 }
 

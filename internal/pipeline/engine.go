@@ -203,7 +203,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, flowData FlowData, trigge
 		if result.ReturnValue != nil {
 			state.Returned = true
 			state.ReturnNodeID = currentID
-			state.ReturnValue = result.ReturnValue
+			state.ReturnValue = sanitizeExecutionValueWithSecrets(result.ReturnValue, executionSecretValuesFromInput(input))
 			return state, nil
 		}
 
@@ -224,18 +224,17 @@ func (e *Engine) recordNodeRun(
 	completedAt time.Time,
 	observer *ExecutionObserver,
 ) {
-	copiedInput := make(map[string]any, len(input))
-	for key, value := range input {
-		copiedInput[key] = value
-	}
+	secretValues := executionSecretValuesFromInput(input)
+	copiedInput := sanitizeExecutionInputMap(input)
+	sanitizedResult := sanitizeExecutionResult(result, secretValues)
 
-	state.NodeResults[nodeID] = result
+	state.NodeResults[nodeID] = sanitizedResult
 
 	run := NodeRun{
 		NodeID:      nodeID,
 		NodeType:    nodeType,
 		Input:       copiedInput,
-		Result:      result,
+		Result:      sanitizedResult,
 		StartedAt:   startedAt,
 		CompletedAt: completedAt,
 	}
@@ -260,15 +259,10 @@ func (e *Engine) notifyNodeStarted(
 		return
 	}
 
-	copiedInput := make(map[string]any, len(input))
-	for key, value := range input {
-		copiedInput[key] = value
-	}
-
 	observer.OnNodeStarted(NodeStart{
 		NodeID:    nodeID,
 		NodeType:  nodeType,
-		Input:     copiedInput,
+		Input:     sanitizeExecutionInputMap(input),
 		StartedAt: startedAt,
 	})
 }

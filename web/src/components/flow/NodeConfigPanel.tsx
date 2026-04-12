@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { Edge, Node } from '@xyflow/react'
 import {
-  X, Settings, Plus, Trash2, CircleHelp,
+  X, Settings, Plus, Trash2, CircleHelp, Code,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { NODE_TYPE_MAP, getNodeColor, getNodeLabel } from './nodeTypes'

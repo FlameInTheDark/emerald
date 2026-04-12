@@ -16,6 +16,7 @@ interface ExecutionEvent {
   trigger_type?: string
   node_id?: string
   node_type?: string
+  input?: string
   status?: string
   error?: string
   output?: string
@@ -27,6 +28,7 @@ interface ExecutionLogProps {
   pipelineId: string
   isOpen: boolean
   onClose: () => void
+  preferredExecutionId?: string | null
   onExecutionSelect?: (data: {
     nodeIds: string[]
     nodeStatuses: Record<string, string>
@@ -34,6 +36,7 @@ interface ExecutionLogProps {
     nodeLogs: Record<string, NodeExecutionLogData>
   } | null) => void
   onAddToAssistant?: (detail: ExecutionDetail) => void
+  onRealtimeStatusChange?: (isReady: boolean) => void
 }
 
 function parseExecutionValue(value?: string): unknown {
@@ -187,7 +190,7 @@ function updateExecutionDetailFromEvent(
       node_id: event.node_id,
       node_type: event.node_type || (existingIndex >= 0 ? nextNodeExecutions[existingIndex].node_type : ''),
       status: 'running',
-      input: existingIndex >= 0 ? nextNodeExecutions[existingIndex].input : undefined,
+      input: event.input || (existingIndex >= 0 ? nextNodeExecutions[existingIndex].input : undefined),
       output: undefined,
       error: undefined,
       started_at: event.started_at || (existingIndex >= 0 ? nextNodeExecutions[existingIndex].started_at : undefined),
@@ -209,7 +212,7 @@ function updateExecutionDetailFromEvent(
       node_id: event.node_id,
       node_type: event.node_type || existing?.node_type || '',
       status: event.status || existing?.status || 'completed',
-      input: existing?.input,
+      input: event.input || existing?.input,
       output: event.output || existing?.output,
       error: event.error || existing?.error,
       started_at: existing?.started_at,
@@ -233,8 +236,10 @@ export default function ExecutionLog({
   pipelineId,
   isOpen,
   onClose,
+  preferredExecutionId,
   onExecutionSelect,
   onAddToAssistant,
+  onRealtimeStatusChange,
 }: ExecutionLogProps) {
   const queryClient = useQueryClient()
   const { addToast } = useUIStore()
@@ -291,12 +296,31 @@ export default function ExecutionLog({
   )
 
   useEffect(() => {
-    if (!isOpen || !pipelineId) return
+    if (!isOpen || !pipelineId) {
+      onRealtimeStatusChange?.(false)
+      return
+    }
 
     const wsUrl = new URL(`/ws/${encodeURIComponent(`pipeline-${pipelineId}`)}`, window.location.origin)
     wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:'
 
     const socket = new WebSocket(wsUrl.toString())
+
+    onRealtimeStatusChange?.(false)
+
+    socket.onopen = () => {
+      onRealtimeStatusChange?.(true)
+      void queryClient.invalidateQueries({ queryKey: ['executions', 'active', pipelineId] })
+      void queryClient.invalidateQueries({ queryKey: ['executions', pipelineId] })
+    }
+
+    socket.onerror = () => {
+      onRealtimeStatusChange?.(false)
+    }
+
+    socket.onclose = () => {
+      onRealtimeStatusChange?.(false)
+    }
 
     socket.onmessage = (event) => {
       try {
@@ -310,6 +334,18 @@ export default function ExecutionLog({
         ))
 
         if (payload.type === 'execution_started' && payload.execution) {
+          queryClient.setQueryData<ExecutionDetail>(['execution', payload.execution], (current) => (
+            current || {
+              execution: {
+                id: payload.execution,
+                pipeline_id: payload.pipeline || pipelineId,
+                trigger_type: payload.trigger_type || 'manual',
+                status: (payload.status as Execution['status']) || 'running',
+                started_at: payload.started_at || new Date().toISOString(),
+              },
+              node_executions: [],
+            }
+          ))
           setSelectedExecution(payload.execution)
           setExpandedNodes(new Set())
         }
@@ -334,9 +370,10 @@ export default function ExecutionLog({
     }
 
     return () => {
+      onRealtimeStatusChange?.(false)
       socket.close()
     }
-  }, [isOpen, pipelineId, queryClient])
+  }, [isOpen, onRealtimeStatusChange, pipelineId, queryClient])
 
   useEffect(() => {
     if (!executionDetail) return
@@ -344,7 +381,20 @@ export default function ExecutionLog({
   }, [executionDetail, onExecutionSelect])
 
   useEffect(() => {
+    if (!isOpen || !preferredExecutionId) {
+      return
+    }
+
+    setSelectedExecution((current) => (current === preferredExecutionId ? current : preferredExecutionId))
+    setExpandedNodes(new Set())
+  }, [isOpen, preferredExecutionId])
+
+  useEffect(() => {
     if (!isOpen) return
+
+    if (selectedExecution && selectedExecution === preferredExecutionId) {
+      return
+    }
 
     if (selectedExecution && (activeExecutionIds.has(selectedExecution) || executions?.some((execution) => execution.id === selectedExecution))) {
       return
@@ -353,7 +403,7 @@ export default function ExecutionLog({
     const fallbackExecutionId = activeExecutions[0]?.execution_id ?? executions?.[0]?.id ?? null
     setSelectedExecution(fallbackExecutionId)
     setExpandedNodes(new Set())
-  }, [activeExecutionIds, activeExecutions, executions, isOpen, selectedExecution])
+  }, [activeExecutionIds, activeExecutions, executions, isOpen, preferredExecutionId, selectedExecution])
 
   const toggleNode = (nodeId: string) => {
     setExpandedNodes((prev) => {

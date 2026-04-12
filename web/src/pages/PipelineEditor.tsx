@@ -913,6 +913,9 @@ function PipelineEditor() {
   const [pipelineStatus, setPipelineStatus] = useState<Pipeline['status']>('draft')
   const [editingDetails, setEditingDetails] = useState(false)
   const [showExecutionLog, setShowExecutionLog] = useState(false)
+  const [executionLogRealtimeReady, setExecutionLogRealtimeReady] = useState(false)
+  const [pendingRunWhenExecutionLogReady, setPendingRunWhenExecutionLogReady] = useState(false)
+  const [preferredExecutionId, setPreferredExecutionId] = useState<string | null>(null)
   const [isFlowInteractive, setIsFlowInteractive] = useState(true)
   const [isNodePaletteOpen, setIsNodePaletteOpen] = useState(false)
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set())
@@ -1398,6 +1401,12 @@ function PipelineEditor() {
   const runMutation = useMutation({
     mutationFn: () => api.pipelines.run(id!),
     onSuccess: (result: PipelineRunResponse) => {
+      setPreferredExecutionId(result.execution_id)
+      if (id) {
+        void queryClient.invalidateQueries({ queryKey: ['executions', id] })
+        void queryClient.invalidateQueries({ queryKey: ['executions', 'active', id] })
+        void queryClient.invalidateQueries({ queryKey: ['execution', result.execution_id] })
+      }
       if (result.status === 'completed') {
         addToast({ type: 'success', title: 'Pipeline completed' })
       } else if (result.status === 'cancelled') {
@@ -1429,11 +1438,25 @@ function PipelineEditor() {
     void saveCurrentPipeline(nextStatus)
   }, [saveCurrentPipeline])
 
-  const handleRun = useCallback(() => {
-    setShowExecutionLog(true)
+  const startPipelineRun = useCallback(() => {
+    setPendingRunWhenExecutionLogReady(false)
     setIsRunning(true)
     runMutation.mutate()
   }, [runMutation])
+
+  const handleRun = useCallback(() => {
+    if (isRunning || pendingRunWhenExecutionLogReady) {
+      return
+    }
+
+    setShowExecutionLog(true)
+    if (executionLogRealtimeReady) {
+      startPipelineRun()
+      return
+    }
+
+    setPendingRunWhenExecutionLogReady(true)
+  }, [executionLogRealtimeReady, isRunning, pendingRunWhenExecutionLogReady, startPipelineRun])
 
   const handleCancelDetailsEdit = useCallback(() => {
     updateDraftLive((currentDraft) => ({
@@ -1529,6 +1552,8 @@ function PipelineEditor() {
 
   const handleCloseExecutionLog = useCallback(() => {
     setShowExecutionLog(false)
+    setExecutionLogRealtimeReady(false)
+    setPendingRunWhenExecutionLogReady(false)
     setHighlightedNodes(new Set())
     setNodeStatuses({})
     setNodeLogs({})
@@ -1549,6 +1574,14 @@ function PipelineEditor() {
       setActiveNodeLogId(null)
     }
   }, [activeNodeLogId, nodeLogs])
+
+  useEffect(() => {
+    if (!pendingRunWhenExecutionLogReady || !executionLogRealtimeReady || isRunning) {
+      return
+    }
+
+    startPipelineRun()
+  }, [executionLogRealtimeReady, isRunning, pendingRunWhenExecutionLogReady, startPipelineRun])
 
   const applyNodeChangesWithConstraints = useCallback((changes: Parameters<OnNodesChange>[0], currentNodes: Node[]) => {
     return applyNodeChanges(changes, currentNodes).map((node) => {
@@ -3002,7 +3035,7 @@ function PipelineEditor() {
                   </div>
                   <Button
                     size="sm"
-                    loading={isRunning}
+                    loading={isRunning || pendingRunWhenExecutionLogReady}
                     onClick={handleRun}
                     className="rounded-xl"
                   >
@@ -3179,8 +3212,10 @@ function PipelineEditor() {
                   pipelineId={id!}
                   isOpen={showExecutionLog}
                   onClose={handleCloseExecutionLog}
+                  preferredExecutionId={preferredExecutionId}
                   onExecutionSelect={handleExecutionHighlight}
                   onAddToAssistant={handleAddExecutionLogToAssistant}
+                  onRealtimeStatusChange={setExecutionLogRealtimeReady}
                 />
               </Panel>
             )}
@@ -3188,8 +3223,8 @@ function PipelineEditor() {
           </ReactFlow>
 
           {assistantEditLockActive && (
-            <div className="pointer-events-none absolute left-4 top-4 z-20">
-              <div className="rounded-full border border-border bg-bg-elevated/95 px-3 py-2 shadow-lg backdrop-blur">
+            <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-4">
+              <div className="max-w-full rounded-full border border-border bg-bg-elevated/95 px-3 py-2 shadow-lg backdrop-blur">
                 <div className="flex items-center gap-2 text-xs">
                   <Brain className="h-3.5 w-3.5 animate-pulse text-accent" />
                   <span className="font-medium text-text">Applying live edits</span>
