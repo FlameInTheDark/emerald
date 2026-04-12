@@ -1,3 +1,10 @@
+## [1.7.1](https://github.com/FlameInTheDark/emerald/compare/v1.7.0...v1.7.1) (2026-04-12)
+
+
+### Bug Fixes
+
+* ollama tool executions, secrets, UI ([6d683af](https://github.com/FlameInTheDark/emerald/commit/6d683afe487a942152e72afc29303fe1dcff0bc7))
+
 # [1.7.0](https://github.com/FlameInTheDark/emerald/compare/v1.6.0...v1.7.0) (2026-04-11)
 
 
