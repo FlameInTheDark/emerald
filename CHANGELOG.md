@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/FlameInTheDark/emerald/compare/v1.7.1...v1.8.0) (2026-04-12)
+
+
+### Features
+
+* trigger plugins ([0cc2538](https://github.com/FlameInTheDark/emerald/commit/0cc2538a6eb2a6c7d8652c49892eddbf72a72a08))
+
 ## [1.7.1](https://github.com/FlameInTheDark/emerald/compare/v1.7.0...v1.7.1) (2026-04-12)
 
 
