@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/FlameInTheDark/emerald/compare/v1.8.0...v1.8.1) (2026-04-14)
+
+
+### Bug Fixes
+
+* ollama provider auth token ([7d7075e](https://github.com/FlameInTheDark/emerald/commit/7d7075e62fd4651dd6acf88fbb8b136ed84ff154))
+
 # [1.8.0](https://github.com/FlameInTheDark/emerald/compare/v1.7.1...v1.8.0) (2026-04-12)
 
 
