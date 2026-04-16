@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/FlameInTheDark/emerald/compare/v1.8.1...v1.9.0) (2026-04-16)
+
+
+### Features
+
+* Added CLI for debug and quick management ([7a96631](https://github.com/FlameInTheDark/emerald/commit/7a96631234979b496d2facadcbca2bf0ae810693))
+
 ## [1.8.1](https://github.com/FlameInTheDark/emerald/compare/v1.8.0...v1.8.1) (2026-04-14)
 
 
