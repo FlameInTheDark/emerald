@@ -5,8 +5,9 @@ import "context"
 type StreamEventType string
 
 const (
-	StreamEventContentDelta StreamEventType = "content_delta"
-	StreamEventUsage        StreamEventType = "usage"
+	StreamEventContentDelta   StreamEventType = "content_delta"
+	StreamEventReasoningDelta StreamEventType = "reasoning_delta"
+	StreamEventUsage          StreamEventType = "usage"
 )
 
 type StreamEvent struct {
@@ -32,6 +33,14 @@ func ChatWithStream(ctx context.Context, provider Provider, req ChatRequest, han
 	}
 
 	if handler != nil {
+		if resp.Reasoning != "" {
+			if err := handler(StreamEvent{
+				Type:  StreamEventReasoningDelta,
+				Delta: resp.Reasoning,
+			}); err != nil {
+				return nil, err
+			}
+		}
 		if resp.Content != "" {
 			if err := handler(StreamEvent{
 				Type:  StreamEventContentDelta,

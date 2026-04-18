@@ -16,6 +16,7 @@ type preparedChatTurn struct {
 	conversation       *models.ChatConversation
 	createConversation bool
 	providerConfig     llm.Config
+	contextWindow      int
 	provider           llm.Provider
 	toolRegistry       llm.ToolExecutor
 	systemPrompt       string
@@ -44,7 +45,7 @@ func (h *LLMChatHandler) prepareChatTurn(
 	if conversation != nil {
 		settings = settingsFromConversation(*conversation)
 	}
-	applySettingsOverrides(&settings, req.ProviderID, req.ClusterID, req.Integrations.Proxmox.Enabled, req.Integrations.Proxmox.ClusterID, req.Integrations.Kubernetes.Enabled, req.Integrations.Kubernetes.ClusterID)
+	applySettingsOverrides(&settings, req.ProviderID, req.ReasoningEffort, req.ClusterID, req.Integrations.Proxmox.Enabled, req.Integrations.Proxmox.ClusterID, req.Integrations.Kubernetes.Enabled, req.Integrations.Kubernetes.ClusterID)
 
 	providerModel, providerConfig, err := h.resolveProvider(ctx, settings.ProviderID)
 	if err != nil {
@@ -65,6 +66,8 @@ func (h *LLMChatHandler) prepareChatTurn(
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize provider: %w", err)
 	}
+
+	contextWindow := llm.ResolveContextWindowWithDiscovery(ctx, providerConfig)
 
 	storedMessages := make([]models.ChatMessage, 0)
 	if conversation != nil {
@@ -105,6 +108,7 @@ func (h *LLMChatHandler) prepareChatTurn(
 		conversation:       conversation,
 		createConversation: createConversation,
 		providerConfig:     providerConfig,
+		contextWindow:      contextWindow,
 		provider:           provider,
 		toolRegistry:       toolRegistry,
 		systemPrompt:       systemPrompt,
@@ -143,7 +147,7 @@ func (h *LLMChatHandler) persistChatTurn(
 	}
 
 	conversation := prepared.conversation
-	conversation.ContextWindow = llm.ResolveContextWindow(prepared.providerConfig)
+	conversation.ContextWindow = prepared.contextWindow
 	conversation.LastPromptTokens = resp.Usage.PromptTokens
 	conversation.LastCompletionTokens = resp.Usage.CompletionTokens
 	conversation.LastTotalTokens = resp.Usage.TotalTokens

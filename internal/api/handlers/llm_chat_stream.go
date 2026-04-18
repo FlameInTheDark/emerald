@@ -26,12 +26,14 @@ type llmChatStreamEvent struct {
 }
 
 type llmChatResponsePayload struct {
-	ConversationID string               `json:"conversation_id"`
-	Conversation   conversationResponse `json:"conversation"`
-	Content        string               `json:"content"`
-	ToolCalls      []llm.ToolCall       `json:"tool_calls,omitempty"`
-	ToolResults    []llm.ToolResult     `json:"tool_results,omitempty"`
-	Usage          llm.Usage            `json:"usage"`
+	ConversationID  string               `json:"conversation_id"`
+	Conversation    conversationResponse `json:"conversation"`
+	Content         string               `json:"content"`
+	Reasoning       string               `json:"reasoning,omitempty"`
+	ToolCalls       []llm.ToolCall       `json:"tool_calls,omitempty"`
+	ToolResults     []llm.ToolResult     `json:"tool_results,omitempty"`
+	ContextMessages []llm.Message        `json:"context_messages,omitempty"`
+	Usage           llm.Usage            `json:"usage"`
 }
 
 func (h *LLMChatHandler) ChatStream(c *fiber.Ctx) error {
@@ -65,6 +67,7 @@ func (h *LLMChatHandler) ChatStream(c *fiber.Ctx) error {
 		c.Context(),
 		prepared.provider,
 		prepared.providerConfig,
+		prepared.contextWindow,
 		prepared.systemPrompt,
 		prepared.conversation,
 		prepared.storedMessages,
@@ -92,11 +95,17 @@ func (h *LLMChatHandler) ChatStream(c *fiber.Ctx) error {
 			prepared.providerConfig.Model,
 			modelMessages,
 			prepared.toolRegistry,
+			derefString(prepared.conversation.ReasoningEffort),
 			func(event llm.ToolChatEvent) error {
 				switch event.Type {
 				case llm.ToolChatEventContentDelta:
 					return writeLLMChatStreamEvent(writer, llmChatStreamEvent{
 						Type:  "assistant_delta",
+						Delta: event.Delta,
+					})
+				case llm.ToolChatEventReasoningDelta:
+					return writeLLMChatStreamEvent(writer, llmChatStreamEvent{
+						Type:  "assistant_reasoning_delta",
 						Delta: event.Delta,
 					})
 				case llm.ToolChatEventToolStarted:
@@ -142,12 +151,14 @@ func (h *LLMChatHandler) ChatStream(c *fiber.Ctx) error {
 		_ = writeLLMChatStreamEvent(writer, llmChatStreamEvent{
 			Type: "done",
 			Response: llmChatResponsePayload{
-				ConversationID: prepared.conversation.ID,
-				Conversation:   newConversationResponse(*reloaded, nil),
-				Content:        resp.Content,
-				ToolCalls:      toolCalls,
-				ToolResults:    toolResults,
-				Usage:          resp.Usage,
+				ConversationID:  prepared.conversation.ID,
+				Conversation:    newConversationResponse(*reloaded, nil),
+				Content:         resp.Content,
+				Reasoning:       resp.Reasoning,
+				ToolCalls:       toolCalls,
+				ToolResults:     toolResults,
+				ContextMessages: contextMessages,
+				Usage:           resp.Usage,
 			},
 		})
 	})

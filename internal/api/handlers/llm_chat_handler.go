@@ -37,11 +37,12 @@ type LLMChatHandler struct {
 }
 
 type llmChatRequest struct {
-	ConversationID string `json:"conversation_id,omitempty"`
-	Message        string `json:"message"`
-	ProviderID     string `json:"provider_id,omitempty"`
-	ClusterID      string `json:"cluster_id,omitempty"`
-	Integrations   struct {
+	ConversationID  string  `json:"conversation_id,omitempty"`
+	Message         string  `json:"message"`
+	ProviderID      string  `json:"provider_id,omitempty"`
+	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
+	ClusterID       string  `json:"cluster_id,omitempty"`
+	Integrations    struct {
 		Proxmox struct {
 			Enabled   *bool  `json:"enabled,omitempty"`
 			ClusterID string `json:"cluster_id,omitempty"`
@@ -54,8 +55,9 @@ type llmChatRequest struct {
 }
 
 type llmConversationUpdateRequest struct {
-	ProviderID   string `json:"provider_id,omitempty"`
-	Integrations struct {
+	ProviderID      string  `json:"provider_id,omitempty"`
+	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
+	Integrations    struct {
 		Proxmox struct {
 			Enabled   *bool  `json:"enabled,omitempty"`
 			ClusterID string `json:"cluster_id,omitempty"`
@@ -69,6 +71,7 @@ type llmConversationUpdateRequest struct {
 
 type conversationSettings struct {
 	ProviderID          *string
+	ReasoningEffort     *string
 	ProxmoxEnabled      bool
 	ProxmoxClusterID    *string
 	KubernetesEnabled   bool
@@ -79,6 +82,7 @@ type conversationResponse struct {
 	ID                   string                        `json:"id"`
 	Title                string                        `json:"title"`
 	ProviderID           *string                       `json:"provider_id,omitempty"`
+	ReasoningEffort      *string                       `json:"reasoning_effort,omitempty"`
 	ProxmoxEnabled       bool                          `json:"proxmox_enabled"`
 	ProxmoxClusterID     *string                       `json:"proxmox_cluster_id,omitempty"`
 	KubernetesEnabled    bool                          `json:"kubernetes_enabled"`
@@ -97,13 +101,15 @@ type conversationResponse struct {
 }
 
 type conversationMessageResponse struct {
-	ID          string           `json:"id"`
-	Role        string           `json:"role"`
-	Content     string           `json:"content"`
-	ToolCalls   []llm.ToolCall   `json:"tool_calls,omitempty"`
-	ToolResults []llm.ToolResult `json:"tool_results,omitempty"`
-	Usage       *llm.Usage       `json:"usage,omitempty"`
-	CreatedAt   string           `json:"created_at"`
+	ID              string           `json:"id"`
+	Role            string           `json:"role"`
+	Content         string           `json:"content"`
+	Reasoning       string           `json:"reasoning,omitempty"`
+	ToolCalls       []llm.ToolCall   `json:"tool_calls,omitempty"`
+	ToolResults     []llm.ToolResult `json:"tool_results,omitempty"`
+	ContextMessages []llm.Message    `json:"context_messages,omitempty"`
+	Usage           *llm.Usage       `json:"usage,omitempty"`
+	CreatedAt       string           `json:"created_at"`
 }
 
 func NewLLMChatHandler(
@@ -202,7 +208,7 @@ func (h *LLMChatHandler) UpdateConversation(c *fiber.Ctx) error {
 	}
 
 	settings := settingsFromConversation(*conversation)
-	applySettingsOverrides(&settings, req.ProviderID, "", req.Integrations.Proxmox.Enabled, req.Integrations.Proxmox.ClusterID, req.Integrations.Kubernetes.Enabled, req.Integrations.Kubernetes.ClusterID)
+	applySettingsOverrides(&settings, req.ProviderID, req.ReasoningEffort, "", req.Integrations.Proxmox.Enabled, req.Integrations.Proxmox.ClusterID, req.Integrations.Kubernetes.Enabled, req.Integrations.Kubernetes.ClusterID)
 	applySettingsToConversation(conversation, settings)
 
 	if err := h.chatStore.UpdateConversationSettings(c.Context(), conversation); err != nil {
@@ -270,6 +276,7 @@ func (h *LLMChatHandler) Chat(c *fiber.Ctx) error {
 		c.Context(),
 		prepared.provider,
 		prepared.providerConfig,
+		prepared.contextWindow,
 		prepared.systemPrompt,
 		prepared.conversation,
 		prepared.storedMessages,
@@ -285,6 +292,7 @@ func (h *LLMChatHandler) Chat(c *fiber.Ctx) error {
 		prepared.providerConfig.Model,
 		modelMessages,
 		prepared.toolRegistry,
+		derefString(prepared.conversation.ReasoningEffort),
 	)
 	if err != nil {
 		status := llmErrorStatus(err)
@@ -300,12 +308,14 @@ func (h *LLMChatHandler) Chat(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"conversation_id": prepared.conversation.ID,
-		"conversation":    newConversationResponse(*reloaded, nil),
-		"content":         resp.Content,
-		"tool_calls":      toolCalls,
-		"tool_results":    toolResults,
-		"usage":           resp.Usage,
+		"conversation_id":  prepared.conversation.ID,
+		"conversation":     newConversationResponse(*reloaded, nil),
+		"content":          resp.Content,
+		"reasoning":        resp.Reasoning,
+		"tool_calls":       toolCalls,
+		"tool_results":     toolResults,
+		"context_messages": contextMessages,
+		"usage":            resp.Usage,
 	})
 }
 
@@ -414,6 +424,7 @@ func defaultConversationSettings() conversationSettings {
 func settingsFromConversation(conversation models.ChatConversation) conversationSettings {
 	return conversationSettings{
 		ProviderID:          conversation.ProviderID,
+		ReasoningEffort:     conversation.ReasoningEffort,
 		ProxmoxEnabled:      conversation.ProxmoxEnabled,
 		ProxmoxClusterID:    conversation.ProxmoxClusterID,
 		KubernetesEnabled:   conversation.KubernetesEnabled,
@@ -424,6 +435,7 @@ func settingsFromConversation(conversation models.ChatConversation) conversation
 func applySettingsOverrides(
 	settings *conversationSettings,
 	providerID string,
+	reasoningEffort *string,
 	legacyClusterID string,
 	proxmoxEnabled *bool,
 	proxmoxClusterID string,
@@ -436,6 +448,9 @@ func applySettingsOverrides(
 
 	if trimmed := strings.TrimSpace(providerID); trimmed != "" {
 		settings.ProviderID = stringPtr(trimmed)
+	}
+	if reasoningEffort != nil {
+		settings.ReasoningEffort = stringPtr(strings.TrimSpace(*reasoningEffort))
 	}
 
 	if proxmoxEnabled != nil {
@@ -466,6 +481,7 @@ func applySettingsOverrides(
 
 func applySettingsToConversation(conversation *models.ChatConversation, settings conversationSettings) {
 	conversation.ProviderID = settings.ProviderID
+	conversation.ReasoningEffort = settings.ReasoningEffort
 	conversation.ProxmoxEnabled = settings.ProxmoxEnabled
 	conversation.ProxmoxClusterID = settings.ProxmoxClusterID
 	conversation.KubernetesEnabled = settings.KubernetesEnabled
@@ -538,6 +554,14 @@ func decodeConversationMessages(messages []models.ChatMessage) ([]conversationMe
 			}
 			response.Usage = &usage
 		}
+		if message.ContextMessages != nil && strings.TrimSpace(*message.ContextMessages) != "" {
+			if err := json.Unmarshal([]byte(*message.ContextMessages), &response.ContextMessages); err != nil {
+				return nil, fmt.Errorf("decode context messages: %w", err)
+			}
+			if len(response.ContextMessages) == 1 {
+				response.Reasoning = strings.TrimSpace(response.ContextMessages[0].Reasoning)
+			}
+		}
 		responses = append(responses, response)
 	}
 	return responses, nil
@@ -553,6 +577,7 @@ func newConversationResponse(conversation models.ChatConversation, messages []co
 		ID:                   conversation.ID,
 		Title:                conversation.Title,
 		ProviderID:           conversation.ProviderID,
+		ReasoningEffort:      conversation.ReasoningEffort,
 		ProxmoxEnabled:       conversation.ProxmoxEnabled,
 		ProxmoxClusterID:     conversation.ProxmoxClusterID,
 		KubernetesEnabled:    conversation.KubernetesEnabled,

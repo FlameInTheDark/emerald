@@ -96,6 +96,7 @@ func (e *LLMAgentNode) Execute(ctx context.Context, config json.RawMessage, inpu
 			},
 		},
 		toolRegistry,
+		"",
 		llm.DefaultMaxToolChatRounds,
 	)
 	if err != nil {

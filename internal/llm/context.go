@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -30,7 +31,7 @@ func ResolveContextWindow(cfg Config) int {
 		return DefaultOllamaContextWindow
 	default:
 		switch cfg.ProviderType {
-		case ProviderOllama:
+		case ProviderOllama, ProviderLMStudio:
 			return DefaultOllamaContextWindow
 		default:
 			return DefaultContextWindow
@@ -38,11 +39,47 @@ func ResolveContextWindow(cfg Config) int {
 	}
 
 	switch cfg.ProviderType {
-	case ProviderOllama:
+	case ProviderOllama, ProviderLMStudio:
 		return DefaultOllamaContextWindow
 	default:
 		return DefaultContextWindow
 	}
+}
+
+func ResolveContextWindowWithDiscovery(ctx context.Context, cfg Config) int {
+	if discovered := discoverContextWindow(ctx, cfg); discovered > 0 {
+		return discovered
+	}
+
+	return ResolveContextWindow(cfg)
+}
+
+func discoverContextWindow(ctx context.Context, cfg Config) int {
+	switch cfg.ProviderType {
+	case ProviderLMStudio:
+		models, err := ListModels(ctx, cfg)
+		if err != nil {
+			return 0
+		}
+		return matchModelContextLength(cfg.Model, models)
+	default:
+		return 0
+	}
+}
+
+func matchModelContextLength(modelID string, models []ModelInfo) int {
+	trimmedModelID := strings.TrimSpace(modelID)
+	if trimmedModelID == "" {
+		return 0
+	}
+
+	for _, model := range models {
+		if strings.EqualFold(strings.TrimSpace(model.ID), trimmedModelID) && model.ContextLength > 0 {
+			return model.ContextLength
+		}
+	}
+
+	return 0
 }
 
 func EstimateMessagesTokens(messages []Message) int {

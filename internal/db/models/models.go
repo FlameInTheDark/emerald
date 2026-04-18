@@ -172,6 +172,7 @@ type ChatConversation struct {
 	UserID                string     `json:"user_id"`
 	Title                 string     `json:"title"`
 	ProviderID            *string    `json:"provider_id,omitempty"`
+	ReasoningEffort       *string    `json:"reasoning_effort,omitempty"`
 	ProxmoxEnabled        bool       `json:"proxmox_enabled"`
 	ProxmoxClusterID      *string    `json:"proxmox_cluster_id,omitempty"`
 	KubernetesEnabled     bool       `json:"kubernetes_enabled"`

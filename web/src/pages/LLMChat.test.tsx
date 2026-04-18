@@ -292,7 +292,7 @@ describe('LLMChat page', () => {
       streamHandler?.({ type: 'assistant_delta', delta: ' now' })
     })
 
-    expect(await screen.findByText('Streaming now')).toBeInTheDocument()
+    expect(await screen.findByText(/Streaming now/)).toBeInTheDocument()
 
     await act(async () => {
       resolveStream?.({
@@ -328,7 +328,99 @@ describe('LLMChat page', () => {
       await Promise.resolve()
     })
 
-    await waitFor(() => expect(screen.getAllByText('Streaming now').length).toBeGreaterThan(0))
+    await waitFor(() => expect(screen.getAllByText(/Streaming now/).length).toBeGreaterThan(0))
+  })
+
+  it('renders streamed tool activity inline between assistant text segments', async () => {
+    const user = userEvent.setup()
+    let resolveStream: ((value: any) => void) | null = null
+
+    mockApi.llm.chatStream.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStream = resolve
+        }),
+    )
+
+    renderChat('/chat')
+
+    const composer = await screen.findByPlaceholderText(/Message Emerald/i)
+    await waitFor(() => expect(composer).toBeEnabled())
+    await user.type(composer, 'Inspect the cluster{enter}')
+
+    const toolCall = {
+      id: 'tool-1',
+      type: 'function',
+      function: {
+        name: 'list_nodes',
+        arguments: '{"cluster_name":"Local"}',
+      },
+    }
+
+    const streamHandler = mockApi.llm.chatStream.mock.calls[0][1]?.onEvent
+    await act(async () => {
+      streamHandler?.({ type: 'assistant_delta', delta: 'Checking the cluster. ' })
+      streamHandler?.({ type: 'tool_started', tool_call: toolCall })
+      streamHandler?.({
+        type: 'tool_finished',
+        tool_call: toolCall,
+        tool_result: {
+          tool: 'list_nodes',
+          arguments: { cluster_name: 'Local' },
+          result: { nodes: [{ name: 'pve' }] },
+        },
+      })
+      streamHandler?.({ type: 'assistant_delta', delta: 'Found one node.' })
+    })
+
+    const beforeNode = await screen.findByText(/Checking the cluster/)
+    const toolNode = await screen.findByText('list_nodes')
+    const afterNode = await screen.findByText(/Found one node/)
+
+    expect(screen.getByText('Done')).toBeInTheDocument()
+    expect(screen.queryByText('Running')).not.toBeInTheDocument()
+    expect(beforeNode.compareDocumentPosition(toolNode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(toolNode.compareDocumentPosition(afterNode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    await act(async () => {
+      resolveStream?.({
+        conversation_id: 'conv-1',
+        conversation: {
+          id: 'conv-1',
+          title: 'Existing conversation',
+          provider_id: 'provider-1',
+          proxmox_enabled: true,
+          proxmox_cluster_id: 'cluster-1',
+          kubernetes_enabled: false,
+          kubernetes_cluster_id: undefined,
+          compaction_count: 0,
+          compacted_at: undefined,
+          context_window: 128000,
+          context_token_count: 1100,
+          last_prompt_tokens: 10,
+          last_completion_tokens: 5,
+          last_total_tokens: 15,
+          last_message_at: '2026-04-08T10:06:00Z',
+          created_at: '2026-04-08T10:00:00Z',
+          updated_at: '2026-04-08T10:06:00Z',
+        },
+        content: 'Checking the cluster. Found one node.',
+        tool_calls: [toolCall],
+        tool_results: [
+          {
+            tool: 'list_nodes',
+            arguments: { cluster_name: 'Local' },
+            result: { nodes: [{ name: 'pve' }] },
+          },
+        ],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 5,
+          total_tokens: 15,
+        },
+      })
+      await Promise.resolve()
+    })
   })
 
   it('shows a temporary rate-limit system notice and clears it on the next send', async () => {
@@ -448,6 +540,7 @@ describe('LLMChat page', () => {
     await waitFor(() => expect(mockApi.llm.conversations.update).toHaveBeenCalled())
     expect(mockApi.llm.conversations.update).toHaveBeenCalledWith('conv-1', {
       provider_id: 'provider-1',
+      reasoning_effort: '',
       integrations: {
         proxmox: {
           enabled: true,
@@ -459,6 +552,74 @@ describe('LLMChat page', () => {
         },
       },
     })
+  })
+
+  it('renders stored reasoning and compact tool activity as transcript rows', async () => {
+    mockApi.llm.conversations.get.mockResolvedValueOnce({
+      id: 'conv-1',
+      title: 'Existing conversation',
+      provider_id: 'provider-1',
+      proxmox_enabled: true,
+      proxmox_cluster_id: 'cluster-1',
+      kubernetes_enabled: false,
+      kubernetes_cluster_id: undefined,
+      compaction_count: 0,
+      compacted_at: undefined,
+      context_window: 128000,
+      context_token_count: 1024,
+      last_prompt_tokens: 10,
+      last_completion_tokens: 5,
+      last_total_tokens: 15,
+      last_message_at: '2026-04-08T10:05:00Z',
+      created_at: '2026-04-08T10:00:00Z',
+      updated_at: '2026-04-08T10:05:00Z',
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'assistant',
+          content: 'The cluster has one node.',
+          context_messages: [
+            {
+              role: 'assistant',
+              reasoning: 'I should inspect the cluster before answering.',
+              content: 'Checking the cluster now.',
+              tool_calls: [
+                {
+                  id: 'tool-1',
+                  type: 'function',
+                  function: {
+                    name: 'list_nodes',
+                    arguments: '{"cluster_name":"Local"}',
+                  },
+                },
+              ],
+            },
+            {
+              role: 'tool',
+              name: 'list_nodes',
+              tool_call_id: 'tool-1',
+              content: '{"result":{"nodes":[{"name":"pve"}]}}',
+            },
+            {
+              role: 'assistant',
+              content: 'The cluster has one node.',
+            },
+          ],
+          created_at: '2026-04-08T10:05:00Z',
+        },
+      ],
+    })
+
+    renderChat('/chat/conv-1')
+
+    expect(await screen.findByText('The cluster has one node.')).toBeInTheDocument()
+    expect(screen.getAllByText('Reasoning').length).toBeGreaterThan(0)
+    expect(screen.getByText('Done')).toBeInTheDocument()
+    expect(screen.getByText('Tool use')).toBeInTheDocument()
+    expect(screen.queryByText('Running')).not.toBeInTheDocument()
+    expect(screen.queryByText('Folded by default')).not.toBeInTheDocument()
+    expect(screen.queryByText('Tool request')).not.toBeInTheDocument()
+    expect(screen.getAllByText('list_nodes').length).toBeGreaterThan(0)
   })
 
   it('deletes a conversation from the rail', async () => {

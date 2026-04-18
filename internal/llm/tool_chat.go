@@ -11,10 +11,11 @@ const DefaultMaxToolChatRounds = 8
 type ToolChatEventType string
 
 const (
-	ToolChatEventContentDelta ToolChatEventType = "content_delta"
-	ToolChatEventToolStarted  ToolChatEventType = "tool_started"
-	ToolChatEventToolFinished ToolChatEventType = "tool_finished"
-	ToolChatEventUsage        ToolChatEventType = "usage"
+	ToolChatEventContentDelta   ToolChatEventType = "content_delta"
+	ToolChatEventReasoningDelta ToolChatEventType = "reasoning_delta"
+	ToolChatEventToolStarted    ToolChatEventType = "tool_started"
+	ToolChatEventToolFinished   ToolChatEventType = "tool_finished"
+	ToolChatEventUsage          ToolChatEventType = "usage"
 )
 
 type ToolChatEvent struct {
@@ -45,6 +46,7 @@ func RunToolChat(
 	model string,
 	messages []Message,
 	tools ToolExecutor,
+	reasoningEffort string,
 	maxRounds int,
 ) (*ChatResponse, []ToolCall, []ToolResult, []Message, error) {
 	if maxRounds <= 0 {
@@ -58,9 +60,10 @@ func RunToolChat(
 
 	for round := 0; round < maxRounds; round++ {
 		resp, err := provider.Chat(ctx, ChatRequest{
-			Model:    model,
-			Messages: messages,
-			Tools:    tools.GetAllTools(),
+			Model:           model,
+			Messages:        messages,
+			Tools:           tools.GetAllTools(),
+			ReasoningEffort: reasoningEffort,
 		})
 		if err != nil {
 			return nil, nil, nil, nil, err
@@ -74,8 +77,9 @@ func RunToolChat(
 		if len(toolCalls) == 0 {
 			resp.Usage = totalUsage
 			finalMessage := Message{
-				Role:    "assistant",
-				Content: resp.Content,
+				Role:      "assistant",
+				Content:   resp.Content,
+				Reasoning: resp.Reasoning,
 			}
 			transcript = append(transcript, finalMessage)
 			return resp, allToolCalls, allToolResults, transcript, nil
@@ -85,6 +89,7 @@ func RunToolChat(
 		assistantMessage := Message{
 			Role:      "assistant",
 			Content:   resp.Content,
+			Reasoning: resp.Reasoning,
 			ToolCalls: toolCalls,
 		}
 		messages = append(messages, assistantMessage)
@@ -128,6 +133,7 @@ func RunToolChatStream(
 	model string,
 	messages []Message,
 	tools ToolExecutor,
+	reasoningEffort string,
 	maxRounds int,
 	handler ToolChatEventHandler,
 ) (*ChatResponse, []ToolCall, []ToolResult, []Message, error) {
@@ -142,9 +148,10 @@ func RunToolChatStream(
 
 	for round := 0; round < maxRounds; round++ {
 		resp, err := ChatWithStream(ctx, provider, ChatRequest{
-			Model:    model,
-			Messages: messages,
-			Tools:    tools.GetAllTools(),
+			Model:           model,
+			Messages:        messages,
+			Tools:           tools.GetAllTools(),
+			ReasoningEffort: reasoningEffort,
 		}, func(event StreamEvent) error {
 			if handler == nil {
 				return nil
@@ -154,6 +161,11 @@ func RunToolChatStream(
 			case StreamEventContentDelta:
 				return handler(ToolChatEvent{
 					Type:  ToolChatEventContentDelta,
+					Delta: event.Delta,
+				})
+			case StreamEventReasoningDelta:
+				return handler(ToolChatEvent{
+					Type:  ToolChatEventReasoningDelta,
 					Delta: event.Delta,
 				})
 			case StreamEventUsage:
@@ -178,8 +190,9 @@ func RunToolChatStream(
 		if len(toolCalls) == 0 {
 			resp.Usage = totalUsage
 			finalMessage := Message{
-				Role:    "assistant",
-				Content: resp.Content,
+				Role:      "assistant",
+				Content:   resp.Content,
+				Reasoning: resp.Reasoning,
 			}
 			transcript = append(transcript, finalMessage)
 			if handler != nil {
@@ -198,6 +211,7 @@ func RunToolChatStream(
 		assistantMessage := Message{
 			Role:      "assistant",
 			Content:   resp.Content,
+			Reasoning: resp.Reasoning,
 			ToolCalls: toolCalls,
 		}
 		messages = append(messages, assistantMessage)

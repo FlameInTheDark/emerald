@@ -5,6 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, Bot, Brain, Check, ChevronDown, Loader2, Menu, MessageSquare, Plus, Send, Server, Settings, Shield, Square, Trash2, User, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
+import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 
 import { api } from '../api/client'
@@ -13,6 +14,7 @@ import { Card } from '../components/ui/Card'
 import Modal from '../components/ui/Modal'
 import Select from '../components/ui/Select'
 import Skeleton from '../components/ui/Skeleton'
+import { buildAssistantTranscript, type AssistantTranscriptPart } from '../lib/chatTranscript'
 import { useUIStore } from '../store/ui'
 import { cn, formatDate } from '../lib/utils'
 import type {
@@ -23,6 +25,7 @@ import type {
   LLMConversationMessage,
   LLMConversationSummary,
   LLMProvider,
+  LLMReasoningEffort,
   LLMToolCall,
   LLMToolResult,
   LLMUsage,
@@ -30,20 +33,14 @@ import type {
 
 type ChatSettingsState = {
   providerId: string
+  reasoningEffort: LLMReasoningEffort | ''
   proxmoxEnabled: boolean
   proxmoxClusterId: string
   kubernetesEnabled: boolean
   kubernetesClusterId: string
 }
 
-type QuickPickerType = 'model' | 'proxmox' | 'kubernetes' | null
-
-type StreamingToolActivity = {
-  id: string
-  toolCall?: LLMToolCall
-  result?: LLMToolResult
-  status: 'running' | 'completed' | 'failed'
-}
+type QuickPickerType = 'model' | 'reasoning' | 'proxmox' | 'kubernetes' | null
 
 type ChatSystemNotice = {
   kind: 'rate_limit'
@@ -53,6 +50,7 @@ type ChatSystemNotice = {
 
 const EMPTY_SETTINGS: ChatSettingsState = {
   providerId: '',
+  reasoningEffort: '',
   proxmoxEnabled: false,
   proxmoxClusterId: '',
   kubernetesEnabled: false,
@@ -69,6 +67,16 @@ const STARTER_PROMPTS = [
   'Show recent Kubernetes events',
   'Summarize the automation tools I can use here',
   'Help me create a pipeline to inspect cluster health',
+]
+
+const REASONING_EFFORT_OPTIONS: Array<{ value: LLMReasoningEffort | ''; label: string; caption: string }> = [
+  { value: '', label: 'Auto', caption: 'Use the model default.' },
+  { value: 'none', label: 'None', caption: 'Fastest, with reasoning disabled when supported.' },
+  { value: 'minimal', label: 'Minimal', caption: 'A light amount of thinking.' },
+  { value: 'low', label: 'Low', caption: 'Lower cost and latency.' },
+  { value: 'medium', label: 'Medium', caption: 'Balanced reasoning depth.' },
+  { value: 'high', label: 'High', caption: 'More deliberate reasoning.' },
+  { value: 'xhigh', label: 'XHigh', caption: 'Maximum supported effort.' },
 ]
 
 const markdownComponents: Components = {
@@ -95,8 +103,7 @@ export default function LLMChat() {
   const [showSettingsDrawer, setShowSettingsDrawer] = useState(false)
   const [sendingDraft, setSendingDraft] = useState<string | null>(null)
   const [systemNotice, setSystemNotice] = useState<ChatSystemNotice | null>(null)
-  const [streamingAssistant, setStreamingAssistant] = useState('')
-  const [streamingToolActivity, setStreamingToolActivity] = useState<StreamingToolActivity[]>([])
+  const [streamingTranscript, setStreamingTranscript] = useState<AssistantTranscriptPart[]>([])
   const [streamingUsage, setStreamingUsage] = useState<LLMUsage | null>(null)
   const [openQuickPicker, setOpenQuickPicker] = useState<QuickPickerType>(null)
   const [conversationToDelete, setConversationToDelete] = useState<LLMConversationSummary | null>(null)
@@ -229,7 +236,10 @@ export default function LLMChat() {
     : blankSettings
   const renderedMessages = activeConversation?.messages ?? []
   const canSend = Boolean(input.trim()) && Boolean(currentSettings.providerId) && !isSending
-  const providerLabel = providers.find((provider) => provider.id === currentSettings.providerId)?.name ?? 'Choose model'
+  const selectedProvider = providers.find((provider) => provider.id === currentSettings.providerId)
+  const reasoningSupported = supportsReasoningEffort(selectedProvider) || currentSettings.reasoningEffort !== ''
+  const providerLabel = selectedProvider?.name ?? 'Choose model'
+  const reasoningLabel = formatReasoningEffortLabel(currentSettings.reasoningEffort)
   const proxmoxLabel = currentSettings.proxmoxEnabled
     ? lookupName(proxmoxClusters, currentSettings.proxmoxClusterId, proxmoxClusters.length > 0 ? 'Select Proxmox' : 'No Proxmox')
     : proxmoxClusters.length > 0
@@ -302,8 +312,7 @@ export default function LLMChat() {
     setInput('')
     setSendingDraft(null)
     setSystemNotice(null)
-    setStreamingAssistant('')
-    setStreamingToolActivity([])
+    setStreamingTranscript([])
     setStreamingUsage(null)
     setBlankSettingsTouched(false)
     setBlankSettings(buildDefaultSettings(providers, proxmoxClusters, kubernetesClusters))
@@ -340,8 +349,7 @@ export default function LLMChat() {
     setIsSending(true)
     setSendingDraft(message)
     setSystemNotice(null)
-    setStreamingAssistant('')
-    setStreamingToolActivity([])
+    setStreamingTranscript([])
     setStreamingUsage(null)
     resetStreamingPlayback(
       streamingDeltaQueueRef,
@@ -358,17 +366,20 @@ export default function LLMChat() {
             case 'assistant_delta':
               enqueueStreamingDelta(
                 event.delta,
-                setStreamingAssistant,
+                setStreamingTranscript,
                 streamingDeltaQueueRef,
                 streamingDeltaTimerRef,
                 streamingPlaybackResolversRef,
               )
               break
+            case 'assistant_reasoning_delta':
+              setStreamingTranscript((previous) => appendStreamingReasoningDelta(previous, event.delta))
+              break
             case 'tool_started':
-              setStreamingToolActivity((previous) => upsertStreamingToolActivity(previous, event.tool_call, undefined))
+              setStreamingTranscript((previous) => upsertStreamingToolStep(previous, event.tool_call, undefined))
               break
             case 'tool_finished':
-              setStreamingToolActivity((previous) => upsertStreamingToolActivity(previous, event.tool_call, event.tool_result))
+              setStreamingTranscript((previous) => upsertStreamingToolStep(previous, event.tool_call, event.tool_result))
               break
             case 'usage':
               setStreamingUsage(event.usage ?? null)
@@ -422,8 +433,7 @@ export default function LLMChat() {
       }
       setIsSending(false)
       setSendingDraft(null)
-      setStreamingAssistant('')
-      setStreamingToolActivity([])
+      setStreamingTranscript([])
       setStreamingUsage(null)
     }
   }
@@ -711,13 +721,12 @@ export default function LLMChat() {
                 )}
 
                 {systemNotice && (
-                  <SystemNoticeBubble notice={systemNotice} />
+                    <SystemNoticeBubble notice={systemNotice} />
                 )}
 
                 {isSending && (
                   <StreamingAssistantBubble
-                    content={streamingAssistant}
-                    toolActivity={streamingToolActivity}
+                    transcript={streamingTranscript}
                     usage={streamingUsage}
                   />
                 )}
@@ -756,6 +765,14 @@ export default function LLMChat() {
                           selectedProviderId={currentSettings.providerId}
                           onSelect={(providerId) => {
                             applyQuickSettings((previous) => ({ ...previous, providerId }))
+                            setOpenQuickPicker(null)
+                          }}
+                        />
+                      ) : openQuickPicker === 'reasoning' ? (
+                        <QuickReasoningPicker
+                          value={currentSettings.reasoningEffort}
+                          onSelect={(reasoningEffort) => {
+                            applyQuickSettings((previous) => ({ ...previous, reasoningEffort }))
                             setOpenQuickPicker(null)
                           }}
                         />
@@ -799,6 +816,16 @@ export default function LLMChat() {
                     disabled={providers.length === 0 || isSavingSettings || isSending}
                     onClick={() => setOpenQuickPicker((previous) => (previous === 'model' ? null : 'model'))}
                   />
+
+                  {reasoningSupported && (
+                    <QuickPickerButton
+                      icon={Brain}
+                      label={reasoningLabel}
+                      active={openQuickPicker === 'reasoning'}
+                      disabled={isSavingSettings || isSending}
+                      onClick={() => setOpenQuickPicker((previous) => (previous === 'reasoning' ? null : 'reasoning'))}
+                    />
+                  )}
 
                   <QuickPickerButton
                     icon={Server}
@@ -1010,6 +1037,7 @@ function EmptyState({
 
 function MessageBubble({ message }: { message: LLMConversationMessage }) {
   const isUser = message.role === 'user'
+  const transcript = isUser ? [] : buildAssistantTranscript(message)
 
   return (
     <div className={cn('flex gap-3', isUser ? 'justify-end' : '')}>
@@ -1020,44 +1048,44 @@ function MessageBubble({ message }: { message: LLMConversationMessage }) {
       )}
 
       <div className={cn('w-full max-w-3xl', isUser ? 'flex flex-col items-end' : '')}>
-        <div
-          className={cn(
-            'overflow-hidden rounded-xl border px-4 py-4',
-            isUser
-              ? 'max-w-[85%] border-accent/30 bg-accent/10 text-text'
-              : 'border-border bg-bg-elevated',
-          )}
-        >
-          {isUser ? (
-            <p className="whitespace-pre-wrap text-sm leading-6 text-text">{message.content}</p>
-          ) : (
-            <div className="chat-markdown text-sm text-text">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                {message.content}
-              </ReactMarkdown>
-            </div>
-          )}
+        {!isUser && (
+          <div className="mb-2 flex items-center gap-2 px-1 text-[11px] uppercase tracking-[0.18em] text-text-dimmed">
+            <span className="font-semibold text-text">Emerald</span>
+            <span>{formatMessageTimestamp(message.created_at)}</span>
+            {message.usage && <span>{message.usage.total_tokens} tokens</span>}
+          </div>
+        )}
 
-          {message.tool_results && message.tool_results.length > 0 && (
-            <div className="mt-4 space-y-3 border-t border-border pt-4">
-              {message.tool_results.map((result, index) => (
-                <ToolResultCard key={`${result.tool}-${index}`} result={result} />
-              ))}
-            </div>
-          )}
-        </div>
+        {isUser ? (
+          <div className="max-w-[85%] overflow-hidden rounded-2xl border border-accent/30 bg-accent/10 px-4 py-4 text-text shadow-sm shadow-black/10">
+            <p className="whitespace-pre-wrap text-sm leading-6 text-text">{message.content}</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {transcript.length > 0 ? (
+              transcript.map((part) => {
+                switch (part.kind) {
+                  case 'assistant':
+                    return <AssistantMarkdownCard key={part.id} content={part.content} />
+                  case 'reasoning':
+                    return <ReasoningCard key={part.id} reasoning={part.reasoning} />
+                  case 'tool':
+                    return <ToolStepCard key={part.id} part={part} />
+                  default:
+                    return null
+                }
+              })
+            ) : (
+              <AssistantMarkdownCard content={message.content} />
+            )}
+          </div>
+        )}
 
         {isUser ? (
           <div className="mt-1.5 px-1 text-[11px] text-text-dimmed">
             {formatMessageTimestamp(message.created_at)}
           </div>
-        ) : (
-          <div className="mt-2 flex items-center gap-2 text-xs text-text-dimmed">
-            <MessageSquare className="h-3.5 w-3.5" />
-            <span>{formatMessageTimestamp(message.created_at)}</span>
-            {message.usage && <span>{message.usage.total_tokens} tokens</span>}
-          </div>
-        )}
+        ) : null}
       </div>
 
       {isUser && (
@@ -1070,15 +1098,17 @@ function MessageBubble({ message }: { message: LLMConversationMessage }) {
 }
 
 function StreamingAssistantBubble({
-  content,
-  toolActivity,
+  transcript,
   usage,
 }: {
-  content: string
-  toolActivity: StreamingToolActivity[]
+  transcript: AssistantTranscriptPart[]
   usage: LLMUsage | null
 }) {
-  const hasContent = content.trim().length > 0
+  const hasVisibleTranscript = transcript.some((part) => (
+    (part.kind === 'assistant' && part.content.trim().length > 0)
+    || (part.kind === 'reasoning' && part.reasoning.trim().length > 0)
+    || part.kind === 'tool'
+  ))
 
   return (
     <div className="flex gap-3">
@@ -1087,36 +1117,92 @@ function StreamingAssistantBubble({
       </div>
 
       <div className="w-full max-w-3xl">
-        <div className="overflow-hidden rounded-xl border border-border bg-bg-elevated px-4 py-4">
-          {hasContent ? (
-            <div className="chat-markdown text-sm text-text">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                {content}
-              </ReactMarkdown>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-sm text-text-muted">
-              <Loader2 className="h-4 w-4 animate-spin text-accent" />
-              <span>{toolActivity.length > 0 ? 'Working with tools…' : 'Thinking…'}</span>
-            </div>
-          )}
-
-          {toolActivity.length > 0 && (
-            <div className="mt-4 space-y-3 border-t border-border pt-4">
-              {toolActivity.map((activity) => (
-                <StreamingToolActivityCard key={activity.id} activity={activity} />
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-2 flex items-center gap-2 text-xs text-text-dimmed">
-          <MessageSquare className="h-3.5 w-3.5" />
+        <div className="mb-2 flex items-center gap-2 px-1 text-[11px] uppercase tracking-[0.18em] text-text-dimmed">
+          <span className="font-semibold text-text">Emerald</span>
           <span>Streaming response</span>
           {usage && usage.total_tokens > 0 && <span>{usage.total_tokens} tokens</span>}
         </div>
+
+        <div className="space-y-2">
+          {hasVisibleTranscript ? (
+            transcript.map((part) => {
+              switch (part.kind) {
+                case 'assistant':
+                  return <AssistantMarkdownCard key={part.id} content={part.content} streaming />
+                case 'reasoning':
+                  return <ReasoningCard key={part.id} reasoning={part.reasoning} open />
+                case 'tool':
+                  return <ToolStepCard key={part.id} part={part} compact />
+                default:
+                  return null
+              }
+            })
+          ) : (
+            <div className="flex items-center gap-2 rounded-2xl border border-border bg-bg-elevated px-4 py-4 text-sm text-text-muted shadow-sm shadow-black/10">
+              <Loader2 className="h-4 w-4 animate-spin text-accent" />
+              <span>Thinking…</span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
+  )
+}
+
+function AssistantMarkdownCard({
+  content,
+  streaming = false,
+}: {
+  content: string
+  streaming?: boolean
+}) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-border bg-bg-elevated px-4 py-3 shadow-sm shadow-black/10">
+      <div className="chat-markdown text-sm text-text">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={markdownComponents}>
+          {streaming ? `${content}▍` : content}
+        </ReactMarkdown>
+      </div>
+    </div>
+  )
+}
+
+function ReasoningCard({
+  reasoning,
+  open = false,
+}: {
+  reasoning: string
+  open?: boolean
+}) {
+  const compactReasoning = reasoning.replace(/\s+/g, ' ').trim()
+  const preview =
+    compactReasoning.length > 88
+      ? `${compactReasoning.slice(0, 88).trimEnd()}…`
+      : compactReasoning || 'Inspect the model reasoning.'
+
+  return (
+    <details open={open} className="group rounded-r-lg border-l-2 border-sky-400/45 bg-sky-500/5">
+      <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="inline-flex h-5 items-center rounded-full border border-sky-400/20 bg-sky-400/10 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-200">
+            <Brain className="mr-1 h-2.5 w-2.5" />
+            Reasoning
+          </span>
+          <p className="truncate text-xs text-text-muted">{preview}</p>
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-text-dimmed">
+          <span>{open ? 'Live reasoning' : 'Reasoning'}</span>
+          <ChevronDown className="h-3.5 w-3.5" />
+        </div>
+      </summary>
+      <div className="border-t border-border/60 px-3 pb-3 pt-2">
+        <div className="chat-markdown text-sm text-text-muted">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={markdownComponents}>
+            {reasoning}
+          </ReactMarkdown>
+        </div>
+      </div>
+    </details>
   )
 }
 
@@ -1138,110 +1224,87 @@ function SystemNoticeBubble({ notice }: { notice: ChatSystemNotice }) {
   )
 }
 
-function StreamingToolActivityCard({ activity }: { activity: StreamingToolActivity }) {
-  const label = activity.toolCall?.function.name ?? activity.result?.tool ?? 'Tool'
-  const finished = activity.status !== 'running'
-  const failed = activity.status === 'failed'
+function ToolStepCard({
+  part,
+  compact = false,
+}: {
+  part: Extract<AssistantTranscriptPart, { kind: 'tool' }>
+  compact?: boolean
+}) {
+  const argumentsPayload = part.toolResult.arguments ?? safeParseJSON(part.toolCall?.function.arguments)
+  const hasDetails = argumentsPayload !== undefined || part.toolResult.result !== undefined || Boolean(part.toolResult.error)
+  const statusLabel = part.status === 'running' ? 'Running' : part.status === 'failed' ? 'Failed' : 'Done'
 
-  return (
-    <details open={!finished} className="group rounded-lg border border-border bg-bg-input">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-        <div className="min-w-0">
-          <p className="truncate font-mono text-xs text-text">{label}</p>
-          <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-text-dimmed">
-            {activity.status === 'running' ? 'Running now' : failed ? 'Execution failed' : 'Execution complete'}
-          </p>
-        </div>
-        <div
+  const statusClasses =
+    part.status === 'running'
+      ? 'border-border bg-bg text-text-muted'
+      : part.status === 'failed'
+        ? 'border-red-500/30 bg-red-500/10 text-red-300'
+        : 'border-accent/25 bg-accent/10 text-accent'
+
+  const content = (
+    <>
+      <div className="flex min-w-0 items-center gap-2">
+        <span
           className={cn(
-            'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium',
-            activity.status === 'running'
-              ? 'border-border bg-bg text-text-muted'
-              : failed
-                ? 'border-red-500/30 bg-red-500/10 text-red-300'
-                : 'border-accent/30 bg-accent/10 text-accent',
+            'inline-flex h-5 items-center rounded-full border px-2 text-[10px] font-semibold uppercase tracking-[0.14em]',
+            statusClasses,
           )}
         >
-          {activity.status === 'running' && <Loader2 className="h-3 w-3 animate-spin" />}
-          <span>{activity.status === 'running' ? 'Running' : failed ? 'Failed' : 'Success'}</span>
-        </div>
-      </summary>
-
-      {(activity.toolCall?.function.arguments || activity.result) && (
-        <div className="space-y-3 border-t border-border px-4 py-4">
-          {activity.toolCall?.function.arguments && (
-            <div>
-              <p className="mb-1 text-[11px] uppercase tracking-[0.16em] text-text-dimmed">Arguments</p>
-              <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-bg px-3 py-2 text-xs text-text-muted">
-                {formatToolArguments(activity.toolCall.function.arguments)}
-              </pre>
-            </div>
-          )}
-
-          {activity.result && (
-            <div>
-              <p className="mb-1 text-[11px] uppercase tracking-[0.16em] text-text-dimmed">
-                {activity.result.error ? 'Error' : 'Result'}
-              </p>
-              <pre
-                className={cn(
-                  'overflow-x-auto whitespace-pre-wrap rounded-lg px-3 py-2 text-xs',
-                  activity.result.error ? 'bg-red-500/10 text-red-300' : 'bg-bg/80 text-text-muted',
-                )}
-              >
-                {activity.result.error || JSON.stringify(activity.result.result, null, 2)}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-    </details>
+          {part.status === 'running' && <Loader2 className="mr-1 h-2.5 w-2.5 animate-spin" />}
+          {statusLabel}
+        </span>
+        <p className="truncate font-mono text-xs text-text">{part.label}</p>
+      </div>
+      <div className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-text-dimmed">
+        <span>{part.toolResult.error ? 'Tool error' : 'Tool use'}</span>
+        {hasDetails && <ChevronDown className="h-3.5 w-3.5" />}
+      </div>
+    </>
   )
-}
 
-function ToolResultCard({ result }: { result: LLMToolResult }) {
+  if (!hasDetails) {
+    return (
+      <div className={cn(
+        'rounded-r-lg border-l-2 border-accent/50 bg-accent/5 px-3 py-2',
+        compact ? 'text-xs' : '',
+      )}>
+        <div className="flex items-center gap-3">
+          {content}
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <details className="group rounded-lg border border-border bg-bg-input">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-        <div className="min-w-0">
-          <p className="truncate font-mono text-xs text-text">{result.tool}</p>
-          <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-text-dimmed">
-            {result.error ? 'Execution failed' : 'Execution details'}
-          </p>
-        </div>
-        <div
-          className={cn(
-            'rounded-full border px-2.5 py-1 text-[11px] font-medium',
-            result.error
-              ? 'border-red-500/30 bg-red-500/10 text-red-300'
-              : 'border-accent/30 bg-accent/10 text-accent',
-          )}
-        >
-          {result.error ? 'Failed' : 'Success'}
-        </div>
+    <details className="group rounded-r-lg border-l-2 border-accent/50 bg-accent/5">
+      <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2">
+        {content}
       </summary>
-      <div className="space-y-3 border-t border-border px-4 py-4">
-        {result.arguments !== undefined && (
+      <div className="space-y-2 border-t border-border/60 px-3 pb-3 pt-2">
+        {argumentsPayload !== undefined && (
           <div>
-            <p className="mb-1 text-[11px] uppercase tracking-[0.16em] text-text-dimmed">Arguments</p>
-            <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-bg px-3 py-2 text-xs text-text-muted">
-              {JSON.stringify(result.arguments, null, 2)}
+            <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-text-dimmed">Arguments</p>
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-bg px-2.5 py-2 text-[11px] text-text-muted">
+              {formatInspectableValue(argumentsPayload)}
             </pre>
           </div>
         )}
-        <div>
-          <p className="mb-1 text-[11px] uppercase tracking-[0.16em] text-text-dimmed">
-            {result.error ? 'Error' : 'Result'}
-          </p>
-          <pre
-            className={cn(
-              'overflow-x-auto whitespace-pre-wrap rounded-lg px-3 py-2 text-xs',
-              result.error ? 'bg-red-500/10 text-red-300' : 'bg-bg/80 text-text-muted',
-            )}
-          >
-            {result.error || JSON.stringify(result.result, null, 2)}
-          </pre>
-        </div>
+        {(part.toolResult.error || part.toolResult.result !== undefined) && (
+          <div>
+            <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-text-dimmed">
+              {part.toolResult.error ? 'Error' : 'Result'}
+            </p>
+            <pre
+              className={cn(
+                'overflow-x-auto whitespace-pre-wrap rounded-md px-2.5 py-2 text-[11px]',
+                part.toolResult.error ? 'bg-red-500/10 text-red-300' : 'bg-bg/80 text-text-muted',
+              )}
+            >
+              {part.toolResult.error || formatInspectableValue(part.toolResult.result)}
+            </pre>
+          </div>
+        )}
       </div>
     </details>
   )
@@ -1363,6 +1426,48 @@ function QuickModelPicker({
             )
           })
         )}
+      </div>
+    </div>
+  )
+}
+
+function QuickReasoningPicker({
+  value,
+  onSelect,
+}: {
+  value: LLMReasoningEffort | ''
+  onSelect: (value: LLMReasoningEffort | '') => void
+}) {
+  return (
+    <div>
+      <div className="border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-text">
+          <Brain className="h-4 w-4 text-accent" />
+          Reasoning Effort
+        </div>
+        <p className="mt-1 text-xs text-text-dimmed">Tune how much reasoning the model should use when the provider supports it.</p>
+      </div>
+      <div className="max-h-72 space-y-1 overflow-y-auto p-2">
+        {REASONING_EFFORT_OPTIONS.map((option) => {
+          const selected = option.value === value
+          return (
+            <button
+              key={option.value || 'auto'}
+              type="button"
+              onClick={() => onSelect(option.value)}
+              className={cn(
+                'flex w-full items-start justify-between gap-3 rounded-xl px-3 py-3 text-left transition-colors',
+                selected ? 'bg-accent/10 text-text' : 'text-text-muted hover:bg-bg-input hover:text-text',
+              )}
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{option.label}</p>
+                <p className="mt-1 text-xs text-text-dimmed">{option.caption}</p>
+              </div>
+              <Check className={cn('mt-0.5 h-4 w-4 shrink-0', selected ? 'text-accent' : 'text-transparent')} />
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -1597,6 +1702,7 @@ function buildDefaultSettings(
   if (proxmoxClusters.length > 0) {
     return {
       providerId: defaultProvider,
+      reasoningEffort: '',
       proxmoxEnabled: true,
       proxmoxClusterId: defaultProxmoxCluster,
       kubernetesEnabled: false,
@@ -1607,6 +1713,7 @@ function buildDefaultSettings(
   if (kubernetesClusters.length > 0) {
     return {
       providerId: defaultProvider,
+      reasoningEffort: '',
       proxmoxEnabled: false,
       proxmoxClusterId: '',
       kubernetesEnabled: true,
@@ -1616,6 +1723,7 @@ function buildDefaultSettings(
 
   return {
     providerId: defaultProvider,
+    reasoningEffort: '',
     proxmoxEnabled: false,
     proxmoxClusterId: '',
     kubernetesEnabled: false,
@@ -1624,7 +1732,7 @@ function buildDefaultSettings(
 }
 
 function settingsFromConversation(
-  conversation: Pick<LLMConversationSummary, 'provider_id' | 'proxmox_enabled' | 'proxmox_cluster_id' | 'kubernetes_enabled' | 'kubernetes_cluster_id'>,
+  conversation: Pick<LLMConversationSummary, 'provider_id' | 'reasoning_effort' | 'proxmox_enabled' | 'proxmox_cluster_id' | 'kubernetes_enabled' | 'kubernetes_cluster_id'>,
   providers: LLMProvider[],
   proxmoxClusters: Cluster[],
   kubernetesClusters: KubernetesCluster[],
@@ -1632,6 +1740,7 @@ function settingsFromConversation(
   const defaults = buildDefaultSettings(providers, proxmoxClusters, kubernetesClusters)
   return {
     providerId: conversation.provider_id ?? defaults.providerId,
+    reasoningEffort: conversation.reasoning_effort ?? defaults.reasoningEffort,
     proxmoxEnabled: conversation.proxmox_enabled,
     proxmoxClusterId: conversation.proxmox_cluster_id ?? defaults.proxmoxClusterId,
     kubernetesEnabled: conversation.kubernetes_enabled,
@@ -1644,6 +1753,7 @@ function buildChatPayload(message: string, settings: ChatSettingsState, conversa
     conversation_id: conversationId,
     message,
     provider_id: settings.providerId || undefined,
+    reasoning_effort: settings.reasoningEffort,
     integrations: {
       proxmox: {
         enabled: settings.proxmoxEnabled,
@@ -1660,6 +1770,7 @@ function buildChatPayload(message: string, settings: ChatSettingsState, conversa
 function buildSettingsPayload(settings: ChatSettingsState) {
   return {
     provider_id: settings.providerId || undefined,
+    reasoning_effort: settings.reasoningEffort,
     integrations: {
       proxmox: {
         enabled: settings.proxmoxEnabled,
@@ -1695,15 +1806,17 @@ function makeClientMessage(role: 'user' | 'assistant', content: string): LLMConv
 function makeAssistantClientMessage(response: LLMChatResponse): LLMConversationMessage {
   return {
     ...makeClientMessage('assistant', response.content || ''),
+    reasoning: response.reasoning,
     tool_calls: response.tool_calls,
     tool_results: response.tool_results,
+    context_messages: response.context_messages,
     usage: response.usage,
   }
 }
 
 function enqueueStreamingDelta(
   delta: string,
-  setStreamingAssistant: Dispatch<SetStateAction<string>>,
+  setStreamingTranscript: Dispatch<SetStateAction<AssistantTranscriptPart[]>>,
   queueRef: MutableRefObject<string[]>,
   timerRef: MutableRefObject<number | null>,
   resolversRef: MutableRefObject<Array<() => void>>,
@@ -1718,11 +1831,11 @@ function enqueueStreamingDelta(
     return
   }
 
-  drainStreamingDeltaQueue(setStreamingAssistant, queueRef, timerRef, resolversRef)
+  drainStreamingDeltaQueue(setStreamingTranscript, queueRef, timerRef, resolversRef)
 }
 
 function drainStreamingDeltaQueue(
-  setStreamingAssistant: Dispatch<SetStateAction<string>>,
+  setStreamingTranscript: Dispatch<SetStateAction<AssistantTranscriptPart[]>>,
   queueRef: MutableRefObject<string[]>,
   timerRef: MutableRefObject<number | null>,
   resolversRef: MutableRefObject<Array<() => void>>,
@@ -1734,7 +1847,7 @@ function drainStreamingDeltaQueue(
     return
   }
 
-  setStreamingAssistant((previous) => previous + next)
+  setStreamingTranscript((previous) => appendStreamingAssistantDelta(previous, next))
 
   const remaining = queueRef.current.length
   const delay =
@@ -1744,7 +1857,7 @@ function drainStreamingDeltaQueue(
     20
 
   timerRef.current = window.setTimeout(() => {
-    drainStreamingDeltaQueue(setStreamingAssistant, queueRef, timerRef, resolversRef)
+    drainStreamingDeltaQueue(setStreamingTranscript, queueRef, timerRef, resolversRef)
   }, delay)
 }
 
@@ -1821,43 +1934,146 @@ function isAbortError(error: unknown): boolean {
   )
 }
 
-function upsertStreamingToolActivity(
-  previous: StreamingToolActivity[],
+function appendStreamingAssistantDelta(
+  previous: AssistantTranscriptPart[],
+  delta: string,
+): AssistantTranscriptPart[] {
+  if (!delta) {
+    return previous
+  }
+
+  const next = [...previous]
+  const lastPart = next.at(-1)
+  if (lastPart?.kind === 'assistant') {
+    next[next.length - 1] = {
+      ...lastPart,
+      content: lastPart.content + delta,
+    }
+    return next
+  }
+
+  return [
+    ...previous,
+    {
+      id: `stream-assistant-${next.length + 1}`,
+      kind: 'assistant',
+      content: delta,
+    },
+  ]
+}
+
+function appendStreamingReasoningDelta(
+  previous: AssistantTranscriptPart[],
+  delta: string,
+): AssistantTranscriptPart[] {
+  if (!delta) {
+    return previous
+  }
+
+  const next = [...previous]
+  const lastPart = next.at(-1)
+  if (lastPart?.kind === 'reasoning') {
+    next[next.length - 1] = {
+      ...lastPart,
+      reasoning: lastPart.reasoning + delta,
+    }
+    return next
+  }
+
+  return [
+    ...previous,
+    {
+      id: `stream-reasoning-${next.length + 1}`,
+      kind: 'reasoning',
+      reasoning: delta,
+    },
+  ]
+}
+
+function upsertStreamingToolStep(
+  previous: AssistantTranscriptPart[],
   toolCall?: LLMToolCall,
   toolResult?: LLMToolResult,
-): StreamingToolActivity[] {
+) {
   const id = toolCall?.id ?? `${toolResult?.tool ?? 'tool'}-${previous.length + 1}`
   const nextStatus = toolResult ? (toolResult.error ? 'failed' : 'completed') : 'running'
-  const existingIndex = previous.findIndex((item) => item.id === id)
+  const existingIndex = previous.findIndex((item) => item.kind === 'tool' && item.id === `stream-tool-${id}`)
 
   if (existingIndex === -1) {
     return [
       ...previous,
       {
-        id,
+        id: `stream-tool-${id}`,
+        kind: 'tool',
         toolCall,
-        result: toolResult,
+        label: toolCall?.function.name ?? toolResult?.tool ?? 'Tool',
         status: nextStatus,
+        toolResult: toolResult ?? {
+          tool: toolCall?.function.name ?? 'Tool',
+          arguments: safeParseJSON(toolCall?.function.arguments),
+        },
       },
     ]
   }
 
   const next = [...previous]
+  const existingPart = next[existingIndex]
+  if (existingPart.kind !== 'tool') {
+    return previous
+  }
   next[existingIndex] = {
-    ...next[existingIndex],
-    toolCall: toolCall ?? next[existingIndex].toolCall,
-    result: toolResult ?? next[existingIndex].result,
+    ...existingPart,
+    toolCall: toolCall ?? existingPart.toolCall,
+    label: toolCall?.function.name ?? existingPart.label,
     status: nextStatus,
+    toolResult: toolResult ?? existingPart.toolResult,
   }
   return next
 }
 
-function formatToolArguments(rawArguments: string): string {
-  try {
-    return JSON.stringify(JSON.parse(rawArguments), null, 2)
-  } catch {
-    return rawArguments
+function safeParseJSON(value?: string): unknown {
+  if (!value?.trim()) {
+    return undefined
   }
+
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+function formatInspectableValue(value: unknown): string {
+  if (value === undefined) {
+    return '(empty)'
+  }
+  if (typeof value === 'string') {
+    return value
+  }
+  return JSON.stringify(value, null, 2)
+}
+
+function supportsReasoningEffort(provider?: LLMProvider): boolean {
+  if (!provider) {
+    return false
+  }
+
+  const model = provider.model.toLowerCase()
+  switch (provider.provider_type) {
+    case 'openai':
+      return /(^|\/)(gpt-5|o1|o3|o4)/i.test(model)
+    case 'openrouter':
+      return /(gpt-5|o1|o3|o4|grok|gemini-2\.5|claude-3\.7|claude-sonnet-4|claude-opus-4|r1|reason|thinking|qwen3)/i.test(model)
+    case 'lmstudio':
+      return /(gpt-oss|reason|thinking|r1|qwen3|nemotron|phi-4-reasoning|deepseek)/i.test(model)
+    default:
+      return false
+  }
+}
+
+function formatReasoningEffortLabel(value: LLMReasoningEffort | ''): string {
+  const option = REASONING_EFFORT_OPTIONS.find((item) => item.value === value)
+  return option ? `Reasoning ${option.label}` : 'Reasoning Auto'
 }
 
 function lookupName(

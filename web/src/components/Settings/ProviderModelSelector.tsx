@@ -29,7 +29,7 @@ const MENU_MAX_WIDTH = 560
 const MENU_MARGIN = 12
 const MENU_OFFSET = 8
 const MENU_FALLBACK_HEIGHT = 420
-const DISCOVERY_PROVIDER_TYPES = new Set(['openai', 'openrouter', 'ollama', 'custom'])
+const DISCOVERY_PROVIDER_TYPES = new Set(['openai', 'openrouter', 'ollama', 'lmstudio', 'custom'])
 
 function normalizeQuery(value: string): string {
   return value.trim().toLowerCase()
@@ -118,10 +118,21 @@ export default function ProviderModelSelector({
   const menuRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const deferredQuery = useDeferredValue(query)
+  const deferredDiscoveryState = useDeferredValue(`${providerType}\n${apiKey}\n${baseURL}\n${value}`)
   const selectedValue = value.trim()
   const normalizedSelectedValue = normalizeQuery(selectedValue)
   const discoveryBlockedMessage = getDiscoveryBlockedMessage(providerType, baseURL)
   const canDiscover = !discoveryBlockedMessage
+
+  useEffect(() => {
+    if (canDiscover) {
+      return
+    }
+
+    setModels([])
+    setStatus('idle')
+    setErrorMessage('')
+  }, [canDiscover])
 
   useEffect(() => {
     if (!isOpen) {
@@ -236,11 +247,14 @@ export default function ProviderModelSelector({
   useEffect(() => {
     if (!isOpen) {
       setQuery('')
+    }
+
+    if (!canDiscover || (!isOpen && !selectedValue)) {
       return
     }
 
     void discoverModels()
-  }, [isOpen])
+  }, [canDiscover, deferredDiscoveryState, isOpen, selectedValue])
 
   const filteredModels = useMemo(() => {
     const normalizedQuery = normalizeQuery(deferredQuery)
@@ -277,13 +291,16 @@ export default function ProviderModelSelector({
   const selectedDiscoveredModel = useMemo(() => (
     models.find((model) => normalizeQuery(model.id) === normalizedSelectedValue) ?? null
   ), [models, normalizedSelectedValue])
+  const selectedContextLength = formatContextLength(selectedDiscoveredModel?.context_length)
 
   const trimmedQuery = query.trim()
   const showCustomOption = trimmedQuery.length > 0 && !exactMatch && normalizeQuery(trimmedQuery) !== normalizedSelectedValue
   const helperText = selectedValue
     ? selectedDiscoveredModel?.name && selectedDiscoveredModel.name !== selectedValue
       ? selectedDiscoveredModel.id
-      : 'Search discovered models or use a custom model ID.'
+      : selectedContextLength
+        ? 'Live context window discovered from this provider.'
+        : 'Search discovered models or use a custom model ID.'
     : supportsModelDiscovery(providerType)
       ? 'Search discovered models or use a custom model ID.'
       : 'Enter a model ID manually.'
@@ -436,12 +453,19 @@ export default function ProviderModelSelector({
         )}
       >
         <div className="min-w-0">
-          <p className={cn(
-            'truncate text-sm font-medium',
-            selectedValue ? 'text-text' : 'text-text-dimmed',
-          )}>
-            {selectedDiscoveredModel?.name || selectedValue || placeholder}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className={cn(
+              'truncate text-sm font-medium',
+              selectedValue ? 'text-text' : 'text-text-dimmed',
+            )}>
+              {selectedDiscoveredModel?.name || selectedValue || placeholder}
+            </p>
+            {selectedContextLength && (
+              <span className="shrink-0 rounded-full border border-border/80 bg-bg px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-text-dimmed">
+                {selectedContextLength}
+              </span>
+            )}
+          </div>
           <p className="mt-1 truncate text-xs text-text-dimmed">{helperText}</p>
         </div>
         <ChevronsUpDown className="h-4 w-4 shrink-0 text-text-dimmed" />

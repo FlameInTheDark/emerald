@@ -12,6 +12,7 @@ const (
 	ProviderOpenRouter ProviderType = "openrouter"
 	ProviderAnthropic  ProviderType = "anthropic"
 	ProviderOllama     ProviderType = "ollama"
+	ProviderLMStudio   ProviderType = "lmstudio"
 	ProviderGemini     ProviderType = "gemini"
 	ProviderGroq       ProviderType = "groq"
 	ProviderCustom     ProviderType = "custom"
@@ -20,6 +21,7 @@ const (
 type Message struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content,omitempty"`
+	Reasoning  string     `json:"reasoning,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	Name       string     `json:"name,omitempty"`
@@ -48,15 +50,17 @@ type ToolSpec struct {
 }
 
 type ChatRequest struct {
-	Model       string           `json:"model"`
-	Messages    []Message        `json:"messages"`
-	Tools       []ToolDefinition `json:"tools,omitempty"`
-	Temperature float64          `json:"temperature,omitempty"`
-	MaxTokens   int              `json:"max_tokens,omitempty"`
+	Model           string           `json:"model"`
+	Messages        []Message        `json:"messages"`
+	Tools           []ToolDefinition `json:"tools,omitempty"`
+	Temperature     float64          `json:"temperature,omitempty"`
+	MaxTokens       int              `json:"max_tokens,omitempty"`
+	ReasoningEffort string           `json:"reasoning_effort,omitempty"`
 }
 
 type ChatResponse struct {
 	Content   string     `json:"content"`
+	Reasoning string     `json:"reasoning,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	Usage     Usage      `json:"usage"`
 }
@@ -90,6 +94,8 @@ func NewProvider(cfg Config) (Provider, error) {
 		return NewOpenRouterProvider(cfg)
 	case ProviderOllama:
 		return NewOllamaProvider(cfg)
+	case ProviderLMStudio:
+		return NewLMStudioProvider(cfg)
 	case ProviderCustom:
 		return NewCustomProvider(cfg)
 	default:
@@ -105,6 +111,8 @@ func DefaultBaseURL(providerType ProviderType) string {
 		return "https://openrouter.ai/api/v1"
 	case ProviderOllama:
 		return "http://localhost:11434"
+	case ProviderLMStudio:
+		return "http://localhost:1234/v1"
 	default:
 		return ""
 	}

@@ -28,6 +28,7 @@ func (s *ChatStore) ListByUser(ctx context.Context, userID string) ([]models.Cha
 			"user_id",
 			"title",
 			"provider_id",
+			"reasoning_effort",
 			"proxmox_enabled",
 			"proxmox_cluster_id",
 			"kubernetes_enabled",
@@ -80,6 +81,7 @@ func (s *ChatStore) GetConversationByID(ctx context.Context, userID string, conv
 			"user_id",
 			"title",
 			"provider_id",
+			"reasoning_effort",
 			"proxmox_enabled",
 			"proxmox_cluster_id",
 			"kubernetes_enabled",
@@ -164,6 +166,7 @@ func (s *ChatStore) CreateConversation(ctx context.Context, conversation *models
 			"user_id",
 			"title",
 			"provider_id",
+			"reasoning_effort",
 			"proxmox_enabled",
 			"proxmox_cluster_id",
 			"kubernetes_enabled",
@@ -184,6 +187,7 @@ func (s *ChatStore) CreateConversation(ctx context.Context, conversation *models
 			strings.TrimSpace(conversation.UserID),
 			strings.TrimSpace(conversation.Title),
 			conversation.ProviderID,
+			conversation.ReasoningEffort,
 			boolToInt(conversation.ProxmoxEnabled),
 			conversation.ProxmoxClusterID,
 			boolToInt(conversation.KubernetesEnabled),
@@ -219,6 +223,7 @@ func (s *ChatStore) UpdateConversationSettings(ctx context.Context, conversation
 	query, args, err := psql.
 		Update("chat_conversations").
 		Set("provider_id", conversation.ProviderID).
+		Set("reasoning_effort", conversation.ReasoningEffort).
 		Set("proxmox_enabled", boolToInt(conversation.ProxmoxEnabled)).
 		Set("proxmox_cluster_id", conversation.ProxmoxClusterID).
 		Set("kubernetes_enabled", boolToInt(conversation.KubernetesEnabled)).
@@ -319,6 +324,7 @@ func (s *ChatStore) AppendTurn(
 				"user_id",
 				"title",
 				"provider_id",
+				"reasoning_effort",
 				"proxmox_enabled",
 				"proxmox_cluster_id",
 				"kubernetes_enabled",
@@ -339,6 +345,7 @@ func (s *ChatStore) AppendTurn(
 				strings.TrimSpace(conversation.UserID),
 				strings.TrimSpace(conversation.Title),
 				conversation.ProviderID,
+				conversation.ReasoningEffort,
 				boolToInt(conversation.ProxmoxEnabled),
 				conversation.ProxmoxClusterID,
 				boolToInt(conversation.KubernetesEnabled),
@@ -378,6 +385,7 @@ func (s *ChatStore) AppendTurn(
 	updateConversationSQL, updateConversationArgs, buildErr := psql.
 		Update("chat_conversations").
 		Set("provider_id", conversation.ProviderID).
+		Set("reasoning_effort", conversation.ReasoningEffort).
 		Set("proxmox_enabled", boolToInt(conversation.ProxmoxEnabled)).
 		Set("proxmox_cluster_id", conversation.ProxmoxClusterID).
 		Set("kubernetes_enabled", boolToInt(conversation.KubernetesEnabled)).
@@ -464,6 +472,7 @@ type chatConversationScanner interface {
 func scanChatConversation(scanner chatConversationScanner) (models.ChatConversation, error) {
 	var conversation models.ChatConversation
 	var providerID sql.NullString
+	var reasoningEffort sql.NullString
 	var proxmoxClusterID sql.NullString
 	var kubernetesClusterID sql.NullString
 	var contextSummary sql.NullString
@@ -473,6 +482,7 @@ func scanChatConversation(scanner chatConversationScanner) (models.ChatConversat
 		&conversation.UserID,
 		&conversation.Title,
 		&providerID,
+		&reasoningEffort,
 		&conversation.ProxmoxEnabled,
 		&proxmoxClusterID,
 		&conversation.KubernetesEnabled,
@@ -494,6 +504,7 @@ func scanChatConversation(scanner chatConversationScanner) (models.ChatConversat
 	}
 
 	conversation.ProviderID = nullableString(providerID)
+	conversation.ReasoningEffort = nullableString(reasoningEffort)
 	conversation.ProxmoxClusterID = nullableString(proxmoxClusterID)
 	conversation.KubernetesClusterID = nullableString(kubernetesClusterID)
 	conversation.ContextSummary = nullableString(contextSummary)

@@ -256,6 +256,17 @@ export interface LLMToolResult {
   error?: string
 }
 
+export type LLMReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+
+export interface LLMContextMessage {
+  role: string
+  content?: string
+  reasoning?: string
+  tool_calls?: LLMToolCall[]
+  tool_call_id?: string
+  name?: string
+}
+
 export interface LLMUsage {
   prompt_tokens: number
   completion_tokens: number
@@ -266,8 +277,10 @@ export interface LLMChatResponse {
   conversation_id: string
   conversation: LLMConversationSummary
   content: string
+  reasoning?: string
   tool_calls?: LLMToolCall[]
   tool_results?: LLMToolResult[]
+  context_messages?: LLMContextMessage[]
   usage?: LLMUsage
 }
 
@@ -375,6 +388,11 @@ export interface LLMChatStreamAssistantDeltaEvent {
   delta: string
 }
 
+export interface LLMChatStreamAssistantReasoningDeltaEvent {
+  type: 'assistant_reasoning_delta'
+  delta: string
+}
+
 export interface LLMChatStreamToolStartedEvent {
   type: 'tool_started'
   tool_call?: LLMToolCall
@@ -404,6 +422,7 @@ export interface LLMChatStreamErrorEvent {
 
 export type LLMChatStreamEvent =
   | LLMChatStreamAssistantDeltaEvent
+  | LLMChatStreamAssistantReasoningDeltaEvent
   | LLMChatStreamToolStartedEvent
   | LLMChatStreamToolFinishedEvent
   | LLMChatStreamUsageEvent
@@ -454,8 +473,10 @@ export interface LLMConversationMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  reasoning?: string
   tool_calls?: LLMToolCall[]
   tool_results?: LLMToolResult[]
+  context_messages?: LLMContextMessage[]
   usage?: LLMUsage
   created_at: string
 }
@@ -464,6 +485,7 @@ export interface LLMConversationSummary {
   id: string
   title: string
   provider_id?: string
+  reasoning_effort?: LLMReasoningEffort
   proxmox_enabled: boolean
   proxmox_cluster_id?: string
   kubernetes_enabled: boolean

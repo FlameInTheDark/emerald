@@ -36,6 +36,7 @@ type ProviderFormState = {
   api_key: string
   base_url: string
   model: string
+  config: string
   is_default: boolean
 }
 
@@ -161,6 +162,8 @@ function getProviderDefaultBaseURL(providerType: string): string {
       return 'https://openrouter.ai/api/v1'
     case 'ollama':
       return 'http://localhost:11434'
+    case 'lmstudio':
+      return 'http://localhost:1234/v1'
     default:
       return ''
   }
@@ -172,6 +175,8 @@ function getProviderModelPlaceholder(providerType: string): string {
       return 'openai/gpt-4o-mini'
     case 'ollama':
       return 'llama3.2'
+    case 'lmstudio':
+      return 'openai/gpt-oss-20b'
     default:
       return 'gpt-4o'
   }
@@ -184,6 +189,7 @@ function getDefaultProviderForm(): ProviderFormState {
     api_key: '',
     base_url: getProviderDefaultBaseURL('openai'),
     model: '',
+    config: '',
     is_default: false,
   }
 }
@@ -247,6 +253,7 @@ function providerToForm(provider: LLMProvider): ProviderFormState {
     api_key: provider.api_key || '',
     base_url: provider.base_url || getProviderDefaultBaseURL(provider.provider_type),
     model: provider.model,
+    config: provider.config || '',
     is_default: provider.is_default,
   }
 }
@@ -1538,6 +1545,7 @@ function LLMSettings() {
                     <option value="openai">OpenAI</option>
                     <option value="openrouter">OpenRouter</option>
                     <option value="ollama">Ollama</option>
+                    <option value="lmstudio">LM Studio</option>
                     <option value="anthropic">Anthropic</option>
                     <option value="custom">Custom (OpenAI-compatible)</option>
                   </select>
@@ -1548,8 +1556,14 @@ function LLMSettings() {
                     type="password"
                     value={form.api_key}
                     onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-                    placeholder={form.provider_type === 'openrouter' ? 'sk-or-...' : 'sk-...'}
-                    required={form.provider_type !== 'ollama'}
+                    placeholder={
+                      form.provider_type === 'openrouter'
+                        ? 'sk-or-...'
+                        : form.provider_type === 'lmstudio'
+                          ? 'Optional for local LM Studio server'
+                          : 'sk-...'
+                    }
+                    required={form.provider_type !== 'ollama' && form.provider_type !== 'lmstudio'}
                   />
                 </div>
                 <div className="sm:col-span-2">

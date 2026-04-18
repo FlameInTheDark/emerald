@@ -23,6 +23,7 @@ func (h *LLMChatHandler) prepareConversationModelMessages(
 	ctx context.Context,
 	provider llm.Provider,
 	providerConfig llm.Config,
+	contextWindow int,
 	systemPrompt string,
 	conversation *models.ChatConversation,
 	storedMessages []models.ChatMessage,
@@ -35,7 +36,11 @@ func (h *LLMChatHandler) prepareConversationModelMessages(
 		}, nil
 	}
 
-	conversation.ContextWindow = llm.ResolveContextWindow(providerConfig)
+	if contextWindow > 0 {
+		conversation.ContextWindow = contextWindow
+	} else {
+		conversation.ContextWindow = llm.ResolveContextWindow(providerConfig)
+	}
 
 	for pass := 0; pass < contextCompactionPasses; pass++ {
 		modelMessages, err := buildConversationModelMessages(systemPrompt, conversation, storedMessages, pendingUserMessage)
@@ -218,6 +223,9 @@ func buildStoredMessageReplay(message models.ChatMessage) ([]llm.Message, error)
 			return nil, fmt.Errorf("decode context messages: %w", err)
 		}
 		if len(replayMessages) > 0 {
+			for index := range replayMessages {
+				replayMessages[index].Reasoning = ""
+			}
 			return replayMessages, nil
 		}
 	}

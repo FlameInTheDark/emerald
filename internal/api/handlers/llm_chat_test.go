@@ -86,7 +86,7 @@ func TestRunToolChatContinuesAfterToolExecution(t *testing.T) {
 	resp, toolCalls, toolResults, transcript, err := runToolChat(context.Background(), provider, "test-model", []llm.Message{
 		{Role: "system", Content: "You are helpful."},
 		{Role: "user", Content: "List nodes"},
-	}, tools)
+	}, tools, "")
 	if err != nil {
 		t.Fatalf("runToolChat returned error: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestRunToolChatReturnsToolErrorsForFollowUp(t *testing.T) {
 	resp, _, toolResults, transcript, err := runToolChat(context.Background(), provider, "test-model", []llm.Message{
 		{Role: "system", Content: "You are helpful."},
 		{Role: "user", Content: "List nodes"},
-	}, tools)
+	}, tools, "")
 	if err != nil {
 		t.Fatalf("runToolChat returned error: %v", err)
 	}

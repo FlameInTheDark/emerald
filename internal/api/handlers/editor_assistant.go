@@ -140,6 +140,7 @@ func (h *EditorAssistantHandler) ChatStream(c *fiber.Ctx) error {
 			providerConfig.Model,
 			modelMessages,
 			toolExecutor,
+			"",
 			func(event llm.ToolChatEvent) error {
 				switch event.Type {
 				case llm.ToolChatEventContentDelta:

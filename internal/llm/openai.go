@@ -13,32 +13,41 @@ import (
 )
 
 type OpenAIProvider struct {
-	apiKey     string
-	baseURL    string
-	model      string
-	httpClient *http.Client
+	providerType ProviderType
+	apiKey       string
+	baseURL      string
+	model        string
+	httpClient   *http.Client
 }
 
 type openAIRequest struct {
-	Model         string               `json:"model"`
-	Messages      []Message            `json:"messages"`
-	Tools         []any                `json:"tools,omitempty"`
-	Temperature   float64              `json:"temperature,omitempty"`
-	MaxTokens     int                  `json:"max_tokens,omitempty"`
-	Stream        bool                 `json:"stream,omitempty"`
-	StreamOptions *openAIStreamOptions `json:"stream_options,omitempty"`
+	Model           string                 `json:"model"`
+	Messages        []Message              `json:"messages"`
+	Tools           []any                  `json:"tools,omitempty"`
+	Temperature     float64                `json:"temperature,omitempty"`
+	MaxTokens       int                    `json:"max_tokens,omitempty"`
+	ReasoningEffort string                 `json:"reasoning_effort,omitempty"`
+	Reasoning       *openAIReasoningConfig `json:"reasoning,omitempty"`
+	Stream          bool                   `json:"stream,omitempty"`
+	StreamOptions   *openAIStreamOptions   `json:"stream_options,omitempty"`
 }
 
 type openAIStreamOptions struct {
 	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
+type openAIReasoningConfig struct {
+	Effort string `json:"effort,omitempty"`
+}
+
 type openAIResponse struct {
 	Choices []struct {
 		Message struct {
-			Role      string     `json:"role"`
-			Content   string     `json:"content"`
-			ToolCalls []ToolCall `json:"tool_calls"`
+			Role             string     `json:"role"`
+			Content          string     `json:"content"`
+			Reasoning        string     `json:"reasoning"`
+			ReasoningContent string     `json:"reasoning_content"`
+			ToolCalls        []ToolCall `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
 	Usage Usage `json:"usage"`
@@ -47,8 +56,10 @@ type openAIResponse struct {
 type openAIStreamResponse struct {
 	Choices []struct {
 		Delta struct {
-			Content   string                  `json:"content"`
-			ToolCalls []openAIStreamToolDelta `json:"tool_calls"`
+			Content          string                  `json:"content"`
+			Reasoning        string                  `json:"reasoning"`
+			ReasoningContent string                  `json:"reasoning_content"`
+			ToolCalls        []openAIStreamToolDelta `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
@@ -79,9 +90,10 @@ func NewOpenAIProvider(cfg Config) (*OpenAIProvider, error) {
 	}
 
 	return &OpenAIProvider{
-		apiKey:  cfg.APIKey,
-		baseURL: baseURL,
-		model:   cfg.Model,
+		providerType: cfg.ProviderType,
+		apiKey:       cfg.APIKey,
+		baseURL:      baseURL,
+		model:        cfg.Model,
 		httpClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
@@ -97,22 +109,31 @@ func (p *OpenAIProvider) Type() ProviderType {
 }
 
 func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	apiReq := buildOpenAIRequest(req, false)
-	return executeOpenAICompatibleChat(ctx, p.httpClient, p.baseURL+"/chat/completions", "Authorization", p.apiKey, apiReq)
+	apiReq := buildOpenAIRequest(req, p.providerType, false)
+	return executeOpenAICompatibleChat(ctx, p.httpClient, resolveOpenAICompatibleChatEndpoint(p.baseURL, p.providerType), "Authorization", p.apiKey, apiReq)
 }
 
 func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, handler StreamHandler) (*ChatResponse, error) {
-	apiReq := buildOpenAIRequest(req, true)
-	return executeOpenAICompatibleChatStream(ctx, p.httpClient, p.baseURL+"/chat/completions", "Authorization", p.apiKey, apiReq, handler)
+	apiReq := buildOpenAIRequest(req, p.providerType, true)
+	return executeOpenAICompatibleChatStream(ctx, p.httpClient, resolveOpenAICompatibleChatEndpoint(p.baseURL, p.providerType), "Authorization", p.apiKey, apiReq, handler)
 }
 
-func buildOpenAIRequest(req ChatRequest, stream bool) openAIRequest {
+func buildOpenAIRequest(req ChatRequest, providerType ProviderType, stream bool) openAIRequest {
 	apiReq := openAIRequest{
 		Model:       req.Model,
 		Messages:    req.Messages,
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,
 		Stream:      stream,
+	}
+
+	switch providerType {
+	case ProviderOpenRouter:
+		if effort := strings.TrimSpace(req.ReasoningEffort); effort != "" {
+			apiReq.Reasoning = &openAIReasoningConfig{Effort: effort}
+		}
+	default:
+		apiReq.ReasoningEffort = strings.TrimSpace(req.ReasoningEffort)
 	}
 
 	if stream {
@@ -172,6 +193,7 @@ func executeOpenAICompatibleChat(
 	choice := apiResp.Choices[0]
 	return &ChatResponse{
 		Content:   choice.Message.Content,
+		Reasoning: firstNonEmpty(choice.Message.Reasoning, choice.Message.ReasoningContent),
 		ToolCalls: choice.Message.ToolCalls,
 		Usage:     apiResp.Usage,
 	}, nil
@@ -208,6 +230,7 @@ func executeOpenAICompatibleChatStream(
 	}
 
 	var contentBuilder strings.Builder
+	var reasoningBuilder strings.Builder
 	var usage Usage
 	accumulators := make([]openAIToolAccumulator, 0)
 
@@ -226,6 +249,19 @@ func executeOpenAICompatibleChatStream(
 		}
 
 		for _, choice := range chunk.Choices {
+			reasoningDelta := firstNonEmpty(choice.Delta.Reasoning, choice.Delta.ReasoningContent)
+			if reasoningDelta != "" {
+				reasoningBuilder.WriteString(reasoningDelta)
+				if handler != nil {
+					if err := handler(StreamEvent{
+						Type:  StreamEventReasoningDelta,
+						Delta: reasoningDelta,
+					}); err != nil {
+						return err
+					}
+				}
+			}
+
 			if choice.Delta.Content != "" {
 				contentBuilder.WriteString(choice.Delta.Content)
 				if handler != nil {
@@ -251,6 +287,7 @@ func executeOpenAICompatibleChatStream(
 	toolCalls := buildAccumulatedToolCalls(accumulators)
 	finalResponse := &ChatResponse{
 		Content:   contentBuilder.String(),
+		Reasoning: reasoningBuilder.String(),
 		ToolCalls: toolCalls,
 		Usage:     usage,
 	}

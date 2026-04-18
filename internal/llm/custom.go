@@ -47,9 +47,9 @@ func (p *CustomProvider) Type() ProviderType {
 }
 
 func (p *CustomProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	return executeOpenAICompatibleChat(ctx, p.httpClient, p.baseURL, p.authHeader, p.apiKey, buildOpenAIRequest(req, false))
+	return executeOpenAICompatibleChat(ctx, p.httpClient, resolveOpenAICompatibleChatEndpoint(p.baseURL, ProviderCustom), p.authHeader, p.apiKey, buildOpenAIRequest(req, ProviderCustom, false))
 }
 
 func (p *CustomProvider) ChatStream(ctx context.Context, req ChatRequest, handler StreamHandler) (*ChatResponse, error) {
-	return executeOpenAICompatibleChatStream(ctx, p.httpClient, p.baseURL, p.authHeader, p.apiKey, buildOpenAIRequest(req, true), handler)
+	return executeOpenAICompatibleChatStream(ctx, p.httpClient, resolveOpenAICompatibleChatEndpoint(p.baseURL, ProviderCustom), p.authHeader, p.apiKey, buildOpenAIRequest(req, ProviderCustom, true), handler)
 }
