@@ -48,10 +48,10 @@ func (d *DB) Close() error {
 	}
 
 	var errs []error
-	if _, err := d.DB.Exec(`PRAGMA wal_checkpoint(TRUNCATE);`); err != nil && !isIgnorableCloseError(err) {
+	if _, err := d.Exec(`PRAGMA wal_checkpoint(TRUNCATE);`); err != nil && !isIgnorableCloseError(err) {
 		errs = append(errs, fmt.Errorf("checkpoint sqlite wal: %w", err))
 	}
-	if _, err := d.DB.Exec(`PRAGMA journal_mode=DELETE;`); err != nil && !isIgnorableCloseError(err) {
+	if _, err := d.Exec(`PRAGMA journal_mode=DELETE;`); err != nil && !isIgnorableCloseError(err) {
 		errs = append(errs, fmt.Errorf("switch sqlite journal mode: %w", err))
 	}
 	if err := d.DB.Close(); err != nil {

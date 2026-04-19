@@ -439,15 +439,3 @@ func minInt(a int, b int) int {
 	}
 	return b
 }
-
-func previewFirstLines(value string, limit int) string {
-	if limit <= 0 {
-		return value
-	}
-
-	lines := strings.Split(value, "\n")
-	if len(lines) <= limit {
-		return value
-	}
-	return strings.Join(lines[:limit], "\n")
-}

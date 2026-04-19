@@ -173,10 +173,10 @@ func (c *Client) searchSearXNG(ctx context.Context, cfg RuntimeConfig, query str
 func (c *Client) searchJina(ctx context.Context, cfg RuntimeConfig, query string) (*SearchResponse, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.JinaSearchBaseURL), "/")
 	if baseURL == "" {
-		return nil, fmt.Errorf("Jina search base URL is not configured")
+		return nil, fmt.Errorf("jina search base URL is not configured")
 	}
 	if strings.TrimSpace(cfg.JinaAPIKey) == "" {
-		return nil, fmt.Errorf("Jina search requires an API key")
+		return nil, fmt.Errorf("jina search requires an API key")
 	}
 
 	endpoint := baseURL + "/?q=" + url.QueryEscape(query)
@@ -226,7 +226,7 @@ func (c *Client) openPageWithHTTP(ctx context.Context, targetURL string, maxChar
 func (c *Client) openPageWithJina(ctx context.Context, cfg RuntimeConfig, targetURL string, maxCharacters int) (*OpenPageResponse, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.JinaReaderBaseURL), "/")
 	if baseURL == "" {
-		return nil, fmt.Errorf("Jina reader base URL is not configured")
+		return nil, fmt.Errorf("jina reader base URL is not configured")
 	}
 
 	readerURL := baseURL + "/" + encodeJinaTargetURL(targetURL)
