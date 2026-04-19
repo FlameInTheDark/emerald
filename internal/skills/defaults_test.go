@@ -75,10 +75,9 @@ func TestBundledDefaultsMatchRepositorySkills(t *testing.T) {
 
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
 	canonicalRoot := filepath.Join(repoRoot, ".agents", "skills")
-	bundledRoot := filepath.Join(repoRoot, "internal", "skills", "defaults", "skills")
 
 	canonicalFiles := listSkillFiles(t, canonicalRoot)
-	bundledFiles := listSkillFiles(t, bundledRoot)
+	bundledFiles := bundledDefaultPaths()
 
 	if !slices.Equal(canonicalFiles, bundledFiles) {
 		t.Fatalf("bundled skill file set does not match repo skills:\ncanonical=%v\nbundled=%v", canonicalFiles, bundledFiles)
@@ -89,11 +88,11 @@ func TestBundledDefaultsMatchRepositorySkills(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read canonical skill %s: %v", relPath, err)
 		}
-		bundledContent, err := os.ReadFile(filepath.Join(bundledRoot, relPath))
-		if err != nil {
-			t.Fatalf("read bundled skill %s: %v", relPath, err)
+		bundledContent, ok := bundledDefaults[relPath]
+		if !ok {
+			t.Fatalf("missing bundled skill %s", relPath)
 		}
-		if string(canonicalContent) != string(bundledContent) {
+		if string(canonicalContent) != bundledContent {
 			t.Fatalf("bundled skill %s is out of sync with .agents/skills", relPath)
 		}
 	}
@@ -115,7 +114,7 @@ func listSkillFiles(t *testing.T, root string) []string {
 		if err != nil {
 			return err
 		}
-		entries = append(entries, relPath)
+		entries = append(entries, filepath.ToSlash(relPath))
 		return nil
 	})
 	if err != nil {
