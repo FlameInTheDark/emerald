@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/FlameInTheDark/emerald/compare/v1.9.0...v1.10.0) (2026-04-18)
+
+
+### Features
+
+* Added LM Studio provider, improved chat ui and model context discovery ([990029c](https://github.com/FlameInTheDark/emerald/commit/990029c81dc2dd553d8d71431cf91afe0a647265))
+
 # [1.9.0](https://github.com/FlameInTheDark/emerald/compare/v1.8.1...v1.9.0) (2026-04-16)
 
 
