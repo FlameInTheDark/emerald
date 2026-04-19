@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -229,6 +231,56 @@ func TestToolRegistryRegistersSkillToolWhenSkillStoreIsConfigured(t *testing.T) 
 	}
 	if payload["name"] != "pipeline-builder" {
 		t.Fatalf("skill name = %v, want pipeline-builder", payload["name"])
+	}
+}
+
+func TestToolRegistryRegistersWorkspaceFileTools(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	registry := NewToolRegistryWithOptions(ToolRegistryOptions{
+		WorkspaceRoot: root,
+	})
+
+	toolNames := make([]string, 0, len(registry.GetAllTools()))
+	for _, tool := range registry.GetAllTools() {
+		toolNames = append(toolNames, tool.Function.Name)
+	}
+
+	expected := []string{"list_directory", "glob_files", "grep_files", "read_file", "edit_file", "write_file"}
+	for _, name := range expected {
+		if !containsString(toolNames, name) {
+			t.Fatalf("expected %s to be registered, got %v", name, toolNames)
+		}
+	}
+}
+
+func TestToolRegistryWorkspaceFileToolReturnsDisplayMetadata(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile seed: %v", err)
+	}
+
+	registry := NewToolRegistryWithOptions(ToolRegistryOptions{
+		WorkspaceRoot: root,
+	})
+
+	result, err := registry.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"notes.txt","offset":1,"limit":2}`))
+	if err != nil {
+		t.Fatalf("Execute read_file returned error: %v", err)
+	}
+
+	payload, ok := result.(ToolExecutionResult)
+	if !ok {
+		t.Fatalf("unexpected tool result type %T", result)
+	}
+	if payload.Display == nil || payload.Display.Kind != ToolResultDisplayRead {
+		t.Fatalf("unexpected display payload: %+v", payload.Display)
+	}
+	if payload.Display.Path != "notes.txt" {
+		t.Fatalf("display path = %q, want notes.txt", payload.Display.Path)
 	}
 }
 

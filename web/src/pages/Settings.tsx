@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Server, Shield, Brain, Plus, Trash2, Edit2, MessageSquare, Power, Users, Lock } from 'lucide-react'
+import { Server, Shield, Brain, Plus, Trash2, Edit2, MessageSquare, Power, Users, Lock, Globe } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
@@ -16,6 +16,7 @@ import AssistantProfilesSettings from '../components/Settings/AssistantProfilesS
 import PluginBundleSettings from '../components/Settings/PluginBundleSettings'
 import ProviderModelSelector from '../components/Settings/ProviderModelSelector'
 import SettingsNavigation from '../components/Settings/SettingsNavigation'
+import WebToolsSettings from '../components/Settings/WebToolsSettings'
 import { cn } from '../lib/utils'
 import { useUIStore } from '../store/ui'
 import { AUTH_SESSION_QUERY_KEY, useAuthSession } from '../lib/auth'
@@ -71,6 +72,7 @@ type SettingsSectionId =
   | 'channels'
   | 'ai.providers'
   | 'ai.assistants'
+  | 'ai.web_tools'
   | 'secrets'
   | 'plugins'
   | 'users'
@@ -109,6 +111,7 @@ const SETTINGS_SECTION_GROUPS: SettingsSectionGroup[] = [
     items: [
       { id: 'ai.providers', label: 'Providers', icon: Brain },
       { id: 'ai.assistants', label: 'Assistants', icon: Brain },
+      { id: 'ai.web_tools', label: 'Web Tools', icon: Globe },
     ],
   },
   {
@@ -134,6 +137,7 @@ const SETTINGS_SECTION_COMPONENTS: Record<SettingsSectionId, () => JSX.Element> 
   channels: ChannelSettings,
   'ai.providers': LLMSettings,
   'ai.assistants': AssistantProfilesSettings,
+  'ai.web_tools': WebToolsSettings,
   secrets: SecretsSettings,
   plugins: PluginBundleSettings,
   users: UserSettings,

@@ -9,9 +9,9 @@ services:
       - emerald-data:/data
       - emerald-agents:/root/.agents
     environment:
-      - AUTOMATOR_PORT=8080
-      - AUTOMATOR_DB_PATH=/data/emerald.db
-      - AUTOMATOR_SKILLS_DIR=/root/.agents/skills
+      - EMERALD_PORT=8080
+      - EMERALD_DB_PATH=/data/emerald.db
+      - EMERALD_SKILLS_DIR=/root/.agents/skills
     restart: unless-stopped
 
 volumes:

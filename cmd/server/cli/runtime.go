@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,7 +79,7 @@ type runtimeBundle struct {
 
 	PluginManager         *plugins.Manager
 	NodeDefinitionService *nodedefs.Service
-	SkillStore            *skills.Store
+	SkillStore            skills.ManagedReader
 	ShellRunner           shellcmd.Runner
 	ChannelService        *channels.Service
 	WSHub                 *ws.Hub
@@ -190,17 +191,52 @@ func newCLIRuntime(ctx context.Context, opts cliRuntimeOptions) (*runtimeBundle,
 		executablePath = ""
 	}
 
-	skillsDir, err := skills.ResolveDirectory(os.Getenv("AUTOMATOR_SKILLS_DIR"), workingDir, executablePath)
+	resolveSkillsDir := func() (string, error) {
+		hints := make([]string, 0, 3)
+		if currentDir, err := os.Getwd(); err == nil && strings.TrimSpace(currentDir) != "" {
+			hints = append(hints, currentDir)
+		}
+		if strings.TrimSpace(workingDir) != "" {
+			hints = append(hints, workingDir)
+		}
+		if strings.TrimSpace(executablePath) != "" {
+			hints = append(hints, executablePath)
+		}
+		return skills.ResolveDirectory(os.Getenv("EMERALD_SKILLS_DIR"), hints...)
+	}
+
+	skillsDir, err := resolveSkillsDir()
 	if err != nil {
 		log.Printf("failed to resolve skills directory: %v", err)
 		skillsDir = filepath.Join(workingDir, ".agents", "skills")
 	}
-	if err := skills.EnsureBundledDefaults(skillsDir); err != nil {
-		log.Printf("failed to seed bundled skills: %v", err)
+
+	var seededSkillDirs sync.Map
+	ensureSkillDefaults := func(dir string) {
+		trimmed := strings.TrimSpace(dir)
+		if trimmed == "" {
+			return
+		}
+		if _, loaded := seededSkillDirs.LoadOrStore(trimmed, struct{}{}); loaded {
+			return
+		}
+		if err := skills.EnsureBundledDefaults(trimmed); err != nil {
+			log.Printf("failed to seed bundled skills: %v", err)
+			seededSkillDirs.Delete(trimmed)
+		}
+	}
+	ensureSkillDefaults(skillsDir)
+	resolveManagedSkillsDir := func() (string, error) {
+		dir, err := resolveSkillsDir()
+		if err != nil {
+			return "", err
+		}
+		ensureSkillDefaults(dir)
+		return dir, nil
 	}
 	log.Printf("loading local skills from %s", skillsDir)
 
-	pluginsDir, err := plugins.ResolveDirectory(os.Getenv("AUTOMATOR_PLUGINS_DIR"), workingDir, executablePath)
+	pluginsDir, err := plugins.ResolveDirectory(os.Getenv("EMERALD_PLUGINS_DIR"), workingDir, executablePath)
 	if err != nil {
 		log.Printf("failed to resolve plugins directory: %v", err)
 		pluginsDir = filepath.Join(workingDir, ".agents", "plugins")
@@ -232,7 +268,7 @@ func newCLIRuntime(ctx context.Context, opts cliRuntimeOptions) (*runtimeBundle,
 		ExecutionStore:         query.NewExecutionStore(database.DB),
 		PluginManager:          pluginManager,
 		NodeDefinitionService:  nodedefs.NewService(pluginManager),
-		SkillStore:             skills.NewStore(skillsDir, 2*time.Second),
+		SkillStore:             skills.NewResolvingStore(resolveManagedSkillsDir, 2*time.Second),
 		ShellRunner:            shellcmd.NewRunner(workingDir),
 		WSHub:                  ws.NewHub(),
 		dispatchController:     &channelDispatchController{},

@@ -60,7 +60,7 @@ func TestClusterStoreLoadsLegacyPlaintextSecret(t *testing.T) {
 		"Legacy Cluster",
 		"127.0.0.1",
 		8006,
-		"root@pam!automator",
+		"root@pam!emerald",
 		"legacy-secret",
 		0,
 	)

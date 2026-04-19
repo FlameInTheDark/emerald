@@ -33,19 +33,19 @@ type AuthConfig struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{
-			Port: getEnv("AUTOMATOR_PORT", "8080"),
-			Host: getEnv("AUTOMATOR_HOST", "0.0.0.0"),
+			Port: getEnv("EMERALD_PORT", "8080"),
+			Host: getEnv("EMERALD_HOST", "0.0.0.0"),
 		},
 		Database: DatabaseConfig{
-			Path: getEnv("AUTOMATOR_DB_PATH", "./emerald.db"),
+			Path: getEnv("EMERALD_DB_PATH", "./emerald.db"),
 		},
 		Auth: AuthConfig{
-			Username:   getEnv("AUTOMATOR_AUTH_USERNAME", "admin"),
-			Password:   getEnv("AUTOMATOR_AUTH_PASSWORD", "admin"),
-			SessionTTL: time.Duration(getEnvInt("AUTOMATOR_AUTH_SESSION_TTL_HOURS", 24)) * time.Hour,
-			CookieName: getEnv("AUTOMATOR_AUTH_COOKIE_NAME", "emerald_session"),
+			Username:   getEnv("EMERALD_AUTH_USERNAME", "admin"),
+			Password:   getEnv("EMERALD_AUTH_PASSWORD", "admin"),
+			SessionTTL: time.Duration(getEnvInt("EMERALD_AUTH_SESSION_TTL_HOURS", 24)) * time.Hour,
+			CookieName: getEnv("EMERALD_AUTH_COOKIE_NAME", "emerald_session"),
 		},
-		EncryptionKey: getEnv("AUTOMATOR_ENCRYPTION_KEY", ""),
+		EncryptionKey: getEnv("EMERALD_ENCRYPTION_KEY", ""),
 	}
 
 	if err := cfg.Validate(); err != nil {

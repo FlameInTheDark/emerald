@@ -7,7 +7,7 @@ import { FileText } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import LucideIcon from '../../ui/LucideIcon'
 
-interface AutomatorNodeData {
+interface EmeraldNodeData {
   label?: string
   type: NodeType
   config?: Record<string, unknown>
@@ -64,7 +64,7 @@ function getSwitchOutlets(config?: Record<string, unknown>): LogicOutlet[] {
   return outlets
 }
 
-function AutomatorNode({ data, selected }: { data: AutomatorNodeData; selected: boolean }) {
+function EmeraldNode({ data, selected }: { data: EmeraldNodeData; selected: boolean }) {
   const nodeType = data.type
   const color = data.color || getNodeColor(nodeType)
   const label = data.label || getNodeLabel(nodeType)
@@ -324,4 +324,4 @@ function AutomatorNode({ data, selected }: { data: AutomatorNodeData; selected: 
   )
 }
 
-export default memo(AutomatorNode)
+export default memo(EmeraldNode)

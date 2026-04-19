@@ -17,6 +17,10 @@ const { mockApi, mockUseNodeDefinitions, mockUseAuthSession } = vi.hoisted(() =>
     llmProviders: {
       list: vi.fn(),
     },
+    webTools: {
+      getConfig: vi.fn(),
+      updateConfig: vi.fn(),
+    },
     secrets: {
       list: vi.fn(),
     },
@@ -102,6 +106,16 @@ describe('Settings page', () => {
     mockApi.clusters.list.mockResolvedValue([])
     mockApi.channels.list.mockResolvedValue([])
     mockApi.llmProviders.list.mockResolvedValue([])
+    mockApi.webTools.getConfig.mockResolvedValue({
+      search_provider: 'disabled',
+      page_observation_mode: 'http',
+      searxng_base_url: 'http://localhost:8080',
+      jina_search_base_url: 'https://s.jina.ai',
+      jina_reader_base_url: 'https://r.jina.ai',
+      search_ready: false,
+      page_read_ready: true,
+      warnings: [],
+    })
     mockApi.secrets.list.mockResolvedValue([])
     mockApi.users.list.mockResolvedValue([])
 
@@ -157,6 +171,17 @@ describe('Settings page', () => {
 
     expect(await screen.findByText('Assistant Profiles Mock')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/settings?section=ai.assistants'))
+  })
+
+  it('includes the web tools AI subsection', async () => {
+    const user = userEvent.setup()
+    renderSettings('/settings?section=ai.providers')
+
+    await user.click(screen.getByRole('button', { name: 'Web Tools' }))
+
+    expect(await screen.findByRole('heading', { name: 'Web Tools' })).toBeInTheDocument()
+    expect(screen.getByText(/search can use SearXNG or Jina/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/settings?section=ai.web_tools'))
   })
 
   it('moves plugin health into its own section instead of secrets', async () => {

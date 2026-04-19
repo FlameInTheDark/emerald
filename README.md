@@ -172,27 +172,27 @@ ghcr.io/flameinthedark/emerald:latest
 
 ## ![](docs/assets/icons/layers.svg) Configuration
 
-Emerald reads configuration from environment variables. The variable names currently keep the `AUTOMATOR_*` prefix for compatibility.
+Emerald reads configuration from environment variables.
 
 | Variable | Default | Description |
 | :-- | :-- | :-- |
-| `AUTOMATOR_PORT` | `8080` | HTTP server port |
-| `AUTOMATOR_HOST` | `0.0.0.0` | Host value loaded into config |
-| `AUTOMATOR_DB_PATH` | `./emerald.db` | SQLite database path |
-| `AUTOMATOR_AUTH_USERNAME` | `admin` | Username ensured at startup when it does not already exist |
-| `AUTOMATOR_AUTH_PASSWORD` | `admin` | Password used when creating the bootstrap user |
-| `AUTOMATOR_AUTH_SESSION_TTL_HOURS` | `24` | Session lifetime in hours |
-| `AUTOMATOR_AUTH_COOKIE_NAME` | `emerald_session` | Authentication cookie name |
-| `AUTOMATOR_ENCRYPTION_KEY` | empty | Optional 32-character seed used to encrypt stored secrets |
-| `AUTOMATOR_SKILLS_DIR` | empty | Optional override for the local skills directory |
-| `AUTOMATOR_PLUGINS_DIR` | empty | Optional override for the local plugins directory |
+| `EMERALD_PORT` | `8080` | HTTP server port |
+| `EMERALD_HOST` | `0.0.0.0` | Host value loaded into config |
+| `EMERALD_DB_PATH` | `./emerald.db` | SQLite database path |
+| `EMERALD_AUTH_USERNAME` | `admin` | Username ensured at startup when it does not already exist |
+| `EMERALD_AUTH_PASSWORD` | `admin` | Password used when creating the bootstrap user |
+| `EMERALD_AUTH_SESSION_TTL_HOURS` | `24` | Session lifetime in hours |
+| `EMERALD_AUTH_COOKIE_NAME` | `emerald_session` | Authentication cookie name |
+| `EMERALD_ENCRYPTION_KEY` | empty | Optional 32-character seed used to encrypt stored secrets |
+| `EMERALD_SKILLS_DIR` | empty | Optional override for the local skills directory |
+| `EMERALD_PLUGINS_DIR` | empty | Optional override for the local plugins directory |
 
 Notes:
 
-- If `AUTOMATOR_ENCRYPTION_KEY` is not provided, Emerald generates one on first boot and stores it in the database.
+- If `EMERALD_ENCRYPTION_KEY` is not provided, Emerald generates one on first boot and stores it in the database.
 - Stored secrets include cluster credentials, channel tokens, and LLM provider keys.
-- If `AUTOMATOR_SKILLS_DIR` is not set, Emerald searches upward from the current working directory and executable location for the nearest `.agents/skills`, then falls back to `./.agents/skills`.
-- If `AUTOMATOR_PLUGINS_DIR` is not set, Emerald uses the local `.agents/plugins` path relative to the workspace or executable.
+- If `EMERALD_SKILLS_DIR` is not set, Emerald searches upward from the current working directory and executable location for the nearest `.agents/skills`, then falls back to `./.agents/skills`.
+- If `EMERALD_PLUGINS_DIR` is not set, Emerald uses the local `.agents/plugins` path relative to the workspace or executable.
 
 ---
 

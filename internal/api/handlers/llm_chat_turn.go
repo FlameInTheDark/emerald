@@ -10,6 +10,7 @@ import (
 	"github.com/FlameInTheDark/emerald/internal/auth"
 	"github.com/FlameInTheDark/emerald/internal/db/models"
 	"github.com/FlameInTheDark/emerald/internal/llm"
+	"github.com/FlameInTheDark/emerald/internal/webtools"
 )
 
 type preparedChatTurn struct {
@@ -21,6 +22,21 @@ type preparedChatTurn struct {
 	toolRegistry       llm.ToolExecutor
 	systemPrompt       string
 	storedMessages     []models.ChatMessage
+}
+
+type streamingChatTurn struct {
+	conversation       *models.ChatConversation
+	createConversation bool
+	storedMessages     []models.ChatMessage
+	userMessage        *models.ChatMessage
+	assistantMessage   *models.ChatMessage
+}
+
+type chatTurnSnapshot struct {
+	response        *llm.ChatResponse
+	toolCalls       []llm.ToolCall
+	toolResults     []llm.ToolResult
+	contextMessages []llm.Message
 }
 
 func (h *LLMChatHandler) prepareChatTurn(
@@ -83,6 +99,15 @@ func (h *LLMChatHandler) prepareChatTurn(
 	}
 	applySettingsToConversation(conversation, settings)
 
+	var webToolsConfig *webtools.RuntimeConfig
+	if h.webTools != nil {
+		resolved, err := h.webTools.Resolve(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("load web tools config: %w", err)
+		}
+		webToolsConfig = &resolved
+	}
+
 	toolRegistry := llm.NewToolRegistryWithOptions(llm.ToolRegistryOptions{
 		ProxmoxStore:               h.clusterStore,
 		KubernetesStore:            h.kubernetesStore,
@@ -95,6 +120,7 @@ func (h *LLMChatHandler) prepareChatTurn(
 		EnableKubernetes:           settings.KubernetesEnabled,
 		SkillStore:                 h.skillStore,
 		ShellRunner:                h.shellRunner,
+		WebToolsConfig:             webToolsConfig,
 	})
 
 	profile, err := h.assistantProfiles.Get(ctx, assistants.ScopeChatWindow)
@@ -186,4 +212,124 @@ func (h *LLMChatHandler) persistChatTurn(
 	}
 
 	return reloaded, nil
+}
+
+func (h *LLMChatHandler) beginStreamingChatTurn(
+	ctx context.Context,
+	prepared *preparedChatTurn,
+	userMessage string,
+) (*streamingChatTurn, error) {
+	if prepared == nil || prepared.conversation == nil {
+		return nil, fmt.Errorf("prepared chat turn is required")
+	}
+
+	turn := &streamingChatTurn{
+		conversation:       prepared.conversation,
+		createConversation: prepared.createConversation,
+		storedMessages:     append([]models.ChatMessage(nil), prepared.storedMessages...),
+		userMessage: &models.ChatMessage{
+			Role:    "user",
+			Content: userMessage,
+		},
+		assistantMessage: &models.ChatMessage{
+			Role:    "assistant",
+			Content: "",
+		},
+	}
+
+	persistedMessages := append(append(make([]models.ChatMessage, 0, len(turn.storedMessages)+2), turn.storedMessages...),
+		*turn.userMessage,
+		*turn.assistantMessage,
+	)
+	if err := updateConversationContextStats(prepared.systemPrompt, turn.conversation, persistedMessages); err != nil {
+		return nil, err
+	}
+
+	if err := h.chatStore.AppendTurn(
+		ctx,
+		turn.conversation,
+		turn.createConversation,
+		turn.userMessage,
+		turn.assistantMessage,
+	); err != nil {
+		return nil, err
+	}
+
+	return turn, nil
+}
+
+func (h *LLMChatHandler) persistStreamingChatTurn(
+	ctx context.Context,
+	prepared *preparedChatTurn,
+	turn *streamingChatTurn,
+	snapshot chatTurnSnapshot,
+) error {
+	if prepared == nil || turn == nil || turn.conversation == nil || turn.userMessage == nil || turn.assistantMessage == nil {
+		return fmt.Errorf("streaming chat turn is required")
+	}
+
+	toolCallsJSON, err := marshalJSONString(snapshot.toolCalls)
+	if err != nil {
+		return err
+	}
+	toolResultsJSON, err := marshalJSONString(snapshot.toolResults)
+	if err != nil {
+		return err
+	}
+	var usage llm.Usage
+	if snapshot.response != nil {
+		usage = snapshot.response.Usage
+	}
+	var usageJSON *string
+	if usage.TotalTokens > 0 || usage.PromptTokens > 0 || usage.CompletionTokens > 0 {
+		usageJSON, err = marshalJSONString(usage)
+		if err != nil {
+			return err
+		}
+	}
+	contextMessagesJSON, err := marshalJSONString(snapshot.contextMessages)
+	if err != nil {
+		return err
+	}
+
+	turn.assistantMessage.Content = snapshotAssistantContent(snapshot.response, snapshot.contextMessages)
+	turn.assistantMessage.ToolCalls = toolCallsJSON
+	turn.assistantMessage.ToolResults = toolResultsJSON
+	turn.assistantMessage.Usage = usageJSON
+	turn.assistantMessage.ContextMessages = contextMessagesJSON
+
+	turn.conversation.ContextWindow = prepared.contextWindow
+	turn.conversation.LastPromptTokens = usage.PromptTokens
+	turn.conversation.LastCompletionTokens = usage.CompletionTokens
+	turn.conversation.LastTotalTokens = usage.TotalTokens
+
+	persistedMessages := append(append(make([]models.ChatMessage, 0, len(turn.storedMessages)+2), turn.storedMessages...),
+		*turn.userMessage,
+		*turn.assistantMessage,
+	)
+	if err := updateConversationContextStats(prepared.systemPrompt, turn.conversation, persistedMessages); err != nil {
+		return err
+	}
+
+	return h.chatStore.UpdateTurn(ctx, turn.conversation, turn.assistantMessage)
+}
+
+func snapshotAssistantContent(resp *llm.ChatResponse, contextMessages []llm.Message) string {
+	if resp != nil && strings.TrimSpace(resp.Content) != "" {
+		return resp.Content
+	}
+
+	parts := make([]string, 0, len(contextMessages))
+	for _, message := range contextMessages {
+		if strings.TrimSpace(message.Role) != "assistant" {
+			continue
+		}
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		parts = append(parts, content)
+	}
+
+	return strings.Join(parts, "\n\n")
 }

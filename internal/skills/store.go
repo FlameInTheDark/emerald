@@ -35,6 +35,12 @@ type Reader interface {
 	GetByName(name string) (Skill, bool)
 }
 
+type ManagedReader interface {
+	Reader
+	Start(parent context.Context) error
+	Stop()
+}
+
 type fileState struct {
 	Size    int64
 	ModTime time.Time
@@ -42,6 +48,7 @@ type fileState struct {
 
 type Store struct {
 	dir          string
+	dirResolver  func() (string, error)
 	pollInterval time.Duration
 
 	mu      sync.RWMutex
@@ -55,12 +62,27 @@ type Store struct {
 }
 
 func NewStore(dir string, pollInterval time.Duration) *Store {
+	return NewResolvingStore(func() (string, error) {
+		trimmed := strings.TrimSpace(dir)
+		if trimmed == "" {
+			return "", fmt.Errorf("skills directory is required")
+		}
+
+		abs, err := filepath.Abs(trimmed)
+		if err != nil {
+			return "", fmt.Errorf("resolve skills directory: %w", err)
+		}
+		return abs, nil
+	}, pollInterval)
+}
+
+func NewResolvingStore(dirResolver func() (string, error), pollInterval time.Duration) *Store {
 	if pollInterval <= 0 {
 		pollInterval = defaultPollInterval
 	}
 
 	return &Store{
-		dir:          dir,
+		dirResolver:  dirResolver,
 		pollInterval: pollInterval,
 		skills:       make(map[string]Skill),
 		summary:      make([]Summary, 0),
@@ -69,10 +91,9 @@ func NewStore(dir string, pollInterval time.Duration) *Store {
 }
 
 func (s *Store) Start(parent context.Context) error {
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
-		return fmt.Errorf("ensure skills directory: %w", err)
+	if _, err := s.refreshDirectory(); err != nil {
+		return err
 	}
-
 	if err := s.reload(); err != nil {
 		return err
 	}
@@ -144,7 +165,15 @@ func (s *Store) watch(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			changed, err := s.hasChanges()
+			dirChanged, err := s.refreshDirectory()
+			if err != nil {
+				continue
+			}
+
+			changed := dirChanged
+			if !changed {
+				changed, err = s.hasChanges()
+			}
 			if err != nil || !changed {
 				continue
 			}
@@ -154,7 +183,12 @@ func (s *Store) watch(ctx context.Context) {
 }
 
 func (s *Store) hasChanges() (bool, error) {
-	files, err := scanSkillFiles(s.dir)
+	dir, err := s.currentDirectory()
+	if err != nil {
+		return false, err
+	}
+
+	files, err := scanSkillFiles(dir)
 	if err != nil {
 		return false, fmt.Errorf("scan skill files: %w", err)
 	}
@@ -184,7 +218,12 @@ func (s *Store) hasChanges() (bool, error) {
 }
 
 func (s *Store) reload() error {
-	skills, files, err := loadSkills(s.dir)
+	dir, err := s.currentDirectory()
+	if err != nil {
+		return err
+	}
+
+	skills, files, err := loadSkills(dir)
 	if err != nil {
 		return fmt.Errorf("load skills: %w", err)
 	}
@@ -208,6 +247,72 @@ func (s *Store) reload() error {
 	s.mu.Unlock()
 
 	return nil
+}
+
+func (s *Store) refreshDirectory() (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("skill store is required")
+	}
+
+	resolved, err := s.resolveDirectory()
+	if err != nil {
+		return false, err
+	}
+
+	s.mu.RLock()
+	current := s.dir
+	s.mu.RUnlock()
+	if pathsEqual(current, resolved) {
+		return false, nil
+	}
+
+	if err := os.MkdirAll(resolved, 0o755); err != nil {
+		return false, fmt.Errorf("ensure skills directory: %w", err)
+	}
+
+	s.mu.Lock()
+	s.dir = resolved
+	s.mu.Unlock()
+	return true, nil
+}
+
+func (s *Store) resolveDirectory() (string, error) {
+	if s == nil || s.dirResolver == nil {
+		return "", fmt.Errorf("skills directory resolver is not configured")
+	}
+
+	dir, err := s.dirResolver()
+	if err != nil {
+		return "", err
+	}
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" {
+		return "", fmt.Errorf("skills directory is required")
+	}
+
+	abs, err := filepath.Abs(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("resolve skills directory: %w", err)
+	}
+	return abs, nil
+}
+
+func (s *Store) currentDirectory() (string, error) {
+	s.mu.RLock()
+	dir := s.dir
+	s.mu.RUnlock()
+	if strings.TrimSpace(dir) == "" {
+		if _, err := s.refreshDirectory(); err != nil {
+			return "", err
+		}
+		s.mu.RLock()
+		dir = s.dir
+		s.mu.RUnlock()
+	}
+	if strings.TrimSpace(dir) == "" {
+		return "", fmt.Errorf("skills directory is required")
+	}
+	return dir, nil
 }
 
 func loadSkills(dir string) (map[string]Skill, map[string]fileState, error) {

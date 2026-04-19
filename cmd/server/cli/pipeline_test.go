@@ -18,9 +18,9 @@ func TestRunPipelineCommandUsesExecutionRunnerExecutionID(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "emerald.db")
 
-	t.Setenv("AUTOMATOR_DB_PATH", dbPath)
-	t.Setenv("AUTOMATOR_SKILLS_DIR", filepath.Join(tempDir, "skills"))
-	t.Setenv("AUTOMATOR_PLUGINS_DIR", filepath.Join(tempDir, "plugins"))
+	t.Setenv("EMERALD_DB_PATH", dbPath)
+	t.Setenv("EMERALD_SKILLS_DIR", filepath.Join(tempDir, "skills"))
+	t.Setenv("EMERALD_PLUGINS_DIR", filepath.Join(tempDir, "plugins"))
 
 	database, err := db.New(dbPath)
 	if err != nil {

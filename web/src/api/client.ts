@@ -30,6 +30,7 @@ import type {
   TemplateImportResult,
   TemplateSummary,
   User,
+  WebToolsConfig,
 } from '../types'
 
 const API_BASE = '/api/v1'
@@ -222,6 +223,10 @@ export const api = {
     update: (id: string, data: unknown) => request<LLMProvider>(`/llm-providers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => request<void>(`/llm-providers/${id}`, { method: 'DELETE' }),
     models: (id: string) => request<LLMModelInfo[]>(`/llm-providers/${id}/models`),
+  },
+  webTools: {
+    getConfig: () => request<WebToolsConfig>('/web-tools/config'),
+    updateConfig: (data: unknown) => request<WebToolsConfig>('/web-tools/config', { method: 'PUT', body: JSON.stringify(data) }),
   },
   executions: {
     listByPipeline: (pipelineId: string) => request<Execution[]>(`/executions/pipelines/${pipelineId}`),

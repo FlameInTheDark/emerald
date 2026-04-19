@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, Bot, Brain, Check, ChevronDown, Loader2, Menu, MessageSquare, Plus, Send, Server, Settings, Shield, Square, Trash2, User, X } from 'lucide-react'
+import hljs from 'highlight.js/lib/common'
+import dockerfileLanguage from 'highlight.js/lib/languages/dockerfile'
+import powershellLanguage from 'highlight.js/lib/languages/powershell'
+import protobufLanguage from 'highlight.js/lib/languages/protobuf'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
@@ -21,6 +25,8 @@ import type {
   Cluster,
   KubernetesCluster,
   LLMChatResponse,
+  LLMChatStreamTurnStartedPayload,
+  LLMContextMessage,
   LLMConversation,
   LLMConversationMessage,
   LLMConversationSummary,
@@ -46,6 +52,20 @@ type ChatSystemNotice = {
   kind: 'rate_limit'
   title: string
   message: string
+}
+
+type QueuedFollowUp = {
+  message: string
+  settings: ChatSettingsState
+  conversationId?: string
+}
+
+type ActiveStreamingTurn = {
+  baseConversationId?: string
+  turn?: LLMChatStreamTurnStartedPayload
+  queuedFollowUp?: QueuedFollowUp
+  suppressRecovery?: boolean
+  suppressInputRestore?: boolean
 }
 
 const EMPTY_SETTINGS: ChatSettingsState = {
@@ -87,6 +107,70 @@ const markdownComponents: Components = {
   ),
 }
 
+const DIFF_LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  bash: 'bash',
+  cjs: 'javascript',
+  cpp: 'cpp',
+  cs: 'csharp',
+  css: 'css',
+  cts: 'typescript',
+  go: 'go',
+  gql: 'graphql',
+  graphql: 'graphql',
+  htm: 'xml',
+  html: 'xml',
+  java: 'java',
+  js: 'javascript',
+  json: 'json',
+  jsx: 'javascript',
+  kt: 'kotlin',
+  kts: 'kotlin',
+  less: 'less',
+  lua: 'lua',
+  md: 'markdown',
+  mjs: 'javascript',
+  mts: 'typescript',
+  php: 'php',
+  proto: 'protobuf',
+  ps1: 'powershell',
+  psd1: 'powershell',
+  psm1: 'powershell',
+  py: 'python',
+  rb: 'ruby',
+  rs: 'rust',
+  scss: 'scss',
+  sh: 'bash',
+  sql: 'sql',
+  svg: 'xml',
+  swift: 'swift',
+  toml: 'toml',
+  ts: 'typescript',
+  tsx: 'typescript',
+  txt: 'plaintext',
+  xml: 'xml',
+  yaml: 'yaml',
+  yml: 'yaml',
+  zsh: 'bash',
+}
+
+const DIFF_LANGUAGE_BY_FILENAME: Record<string, string> = {
+  dockerfile: 'dockerfile',
+  justfile: 'makefile',
+  makefile: 'makefile',
+}
+
+if (!hljs.getLanguage('dockerfile')) {
+  hljs.registerLanguage('dockerfile', dockerfileLanguage)
+}
+
+if (!hljs.getLanguage('powershell')) {
+  hljs.registerLanguage('powershell', powershellLanguage)
+}
+
+if (!hljs.getLanguage('protobuf')) {
+  hljs.registerLanguage('protobuf', protobufLanguage)
+}
+
 export default function LLMChat() {
   const { conversationId } = useParams<{ conversationId: string }>()
   const navigate = useNavigate()
@@ -116,6 +200,9 @@ export default function LLMChat() {
   const streamingDeltaTimerRef = useRef<number | null>(null)
   const streamingPlaybackResolversRef = useRef<Array<() => void>>([])
   const streamAbortRef = useRef<AbortController | null>(null)
+  const activeStreamingTurnRef = useRef<ActiveStreamingTurn | null>(null)
+  const streamingTranscriptRef = useRef<AssistantTranscriptPart[]>([])
+  const streamingUsageRef = useRef<LLMUsage | null>(null)
 
   const providersQuery = useQuery<LLMProvider[]>({
     queryKey: ['llm-providers'],
@@ -234,8 +321,10 @@ export default function LLMChat() {
   const currentSettings = conversationId
     ? conversationSettings ?? buildDefaultSettings(providers, proxmoxClusters, kubernetesClusters)
     : blankSettings
-  const renderedMessages = activeConversation?.messages ?? []
-  const canSend = Boolean(input.trim()) && Boolean(currentSettings.providerId) && !isSending
+  const renderedMessages = (activeConversation?.messages ?? []).filter(isVisibleConversationMessage)
+  const hasDraftInput = Boolean(input.trim())
+  const canQueueFollowUp = hasDraftInput && Boolean(currentSettings.providerId) && isSending
+  const canSend = hasDraftInput && Boolean(currentSettings.providerId) && !isSending
   const selectedProvider = providers.find((provider) => provider.id === currentSettings.providerId)
   const reasoningSupported = supportsReasoningEffort(selectedProvider) || currentSettings.reasoningEffort !== ''
   const providerLabel = selectedProvider?.name ?? 'Choose model'
@@ -255,6 +344,24 @@ export default function LLMChat() {
       ? 'Kubernetes off'
       : 'No Kubernetes'
   const showContextUsage = Boolean(activeConversationMeta && activeConversationMeta.context_window > 0)
+
+  function replaceStreamingTranscript(next: AssistantTranscriptPart[]) {
+    streamingTranscriptRef.current = next
+    setStreamingTranscript(next)
+  }
+
+  function updateStreamingTranscript(updater: (previous: AssistantTranscriptPart[]) => AssistantTranscriptPart[]) {
+    setStreamingTranscript((previous) => {
+      const next = updater(previous)
+      streamingTranscriptRef.current = next
+      return next
+    })
+  }
+
+  function replaceStreamingUsage(next: LLMUsage | null) {
+    streamingUsageRef.current = next
+    setStreamingUsage(next)
+  }
 
   function updateSettings(updater: (previous: ChatSettingsState) => ChatSettingsState) {
     if (conversationId) {
@@ -308,12 +415,17 @@ export default function LLMChat() {
   }
 
   function handleNewConversation() {
+    if (activeStreamingTurnRef.current) {
+      activeStreamingTurnRef.current.suppressRecovery = true
+      activeStreamingTurnRef.current.suppressInputRestore = true
+      activeStreamingTurnRef.current.queuedFollowUp = undefined
+    }
     streamAbortRef.current?.abort()
     setInput('')
     setSendingDraft(null)
     setSystemNotice(null)
-    setStreamingTranscript([])
-    setStreamingUsage(null)
+    replaceStreamingTranscript([])
+    replaceStreamingUsage(null)
     setBlankSettingsTouched(false)
     setBlankSettings(buildDefaultSettings(providers, proxmoxClusters, kubernetesClusters))
     setConversationSettings(null)
@@ -338,19 +450,70 @@ export default function LLMChat() {
     }))
   }
 
-  async function handleSend() {
-    const message = input.trim()
-    if (!message || !currentSettings.providerId || isSending) {
+  function syncConversationTurn(
+    conversation: LLMConversationSummary,
+    userMessage: LLMConversationMessage,
+    assistantMessage: LLMConversationMessage | null,
+    baseConversationId?: string,
+  ) {
+    const nextConversationId = conversation.id
+
+    queryClient.setQueryData<LLMConversation>(['llm-conversation', nextConversationId], (previous) => ({
+      ...(previous ?? { ...conversation, messages: [] }),
+      ...conversation,
+      messages: upsertConversationTurnMessages(
+        previous?.messages ?? (baseConversationId === nextConversationId ? renderedMessages : []),
+        [userMessage, assistantMessage].filter(Boolean) as LLMConversationMessage[],
+      ),
+    }))
+    queryClient.setQueryData<LLMConversationSummary[]>(['llm-conversations'], (previous) => mergeConversationSummary(previous, conversation))
+
+    if (!baseConversationId) {
+      navigate(`/chat/${nextConversationId}`)
+    }
+
+    setConversationSettings(settingsFromConversation(conversation, providers, proxmoxClusters, kubernetesClusters))
+    void queryClient.invalidateQueries({ queryKey: ['llm-conversation', nextConversationId] })
+    void queryClient.invalidateQueries({ queryKey: ['llm-conversations'] })
+  }
+
+  async function recoverPartialTurn(activeTurn: ActiveStreamingTurn | null) {
+    await waitForStreamingPlayback(streamingDeltaQueueRef, streamingDeltaTimerRef, streamingPlaybackResolversRef)
+
+    if (!activeTurn?.turn || activeTurn.suppressRecovery) {
       return
     }
 
+    const partialAssistant = buildPartialAssistantMessage(
+      activeTurn.turn.assistant_message,
+      streamingTranscriptRef.current,
+      streamingUsageRef.current,
+    )
+
+    syncConversationTurn(
+      activeTurn.turn.conversation,
+      activeTurn.turn.user_message,
+      isVisibleConversationMessage(partialAssistant) ? partialAssistant : null,
+      activeTurn.baseConversationId,
+    )
+  }
+
+  async function startStreamingTurn(
+    message: string,
+    settings: ChatSettingsState,
+    baseConversationId?: string,
+  ) {
     const controller = new AbortController()
+    const activeTurn: ActiveStreamingTurn = {
+      baseConversationId,
+    }
+    activeStreamingTurnRef.current = activeTurn
     streamAbortRef.current = controller
     setIsSending(true)
     setSendingDraft(message)
     setSystemNotice(null)
-    setStreamingTranscript([])
-    setStreamingUsage(null)
+    replaceStreamingTranscript([])
+    replaceStreamingUsage(null)
     resetStreamingPlayback(
       streamingDeltaQueueRef,
       streamingDeltaTimerRef,
@@ -360,82 +523,117 @@ export default function LLMChat() {
     syncComposerHeight(textareaRef.current)
 
     try {
-      const response = await api.llm.chatStream(buildChatPayload(message, currentSettings, conversationId), {
+      const response = await api.llm.chatStream(buildChatPayload(message, settings, baseConversationId), {
         onEvent: (event) => {
           switch (event.type) {
+            case 'turn_started':
+              activeTurn.turn = event.turn
+              break
             case 'assistant_delta':
               enqueueStreamingDelta(
                 event.delta,
-                setStreamingTranscript,
+                updateStreamingTranscript,
                 streamingDeltaQueueRef,
                 streamingDeltaTimerRef,
                 streamingPlaybackResolversRef,
               )
               break
             case 'assistant_reasoning_delta':
-              setStreamingTranscript((previous) => appendStreamingReasoningDelta(previous, event.delta))
+              updateStreamingTranscript((previous) => appendStreamingReasoningDelta(previous, event.delta))
               break
             case 'tool_started':
-              setStreamingTranscript((previous) => upsertStreamingToolStep(previous, event.tool_call, undefined))
+              updateStreamingTranscript((previous) => upsertStreamingToolStep(previous, event.tool_call, undefined))
               break
             case 'tool_finished':
-              setStreamingTranscript((previous) => upsertStreamingToolStep(previous, event.tool_call, event.tool_result))
+              updateStreamingTranscript((previous) => upsertStreamingToolStep(previous, event.tool_call, event.tool_result))
               break
             case 'usage':
-              setStreamingUsage(event.usage ?? null)
+              replaceStreamingUsage(event.usage ?? null)
               break
           }
         },
         signal: controller.signal,
       })
+
       await waitForStreamingPlayback(streamingDeltaQueueRef, streamingDeltaTimerRef, streamingPlaybackResolversRef)
-      const userMessage = makeClientMessage('user', message)
-      const assistantMessage = makeAssistantClientMessage(response)
-      const nextConversationId = response.conversation_id
 
-      queryClient.setQueryData<LLMConversation>(['llm-conversation', nextConversationId], (previous) => ({
-        ...(previous ?? { ...response.conversation, messages: [] }),
-        ...response.conversation,
-        messages: [...(previous?.messages ?? renderedMessages), userMessage, assistantMessage],
-      }))
-      queryClient.setQueryData<LLMConversationSummary[]>(['llm-conversations'], (previous) => mergeConversationSummary(previous, response.conversation))
-
-      if (!conversationId) {
-        navigate(`/chat/${nextConversationId}`)
-      }
-
-      setConversationSettings(settingsFromConversation(response.conversation, providers, proxmoxClusters, kubernetesClusters))
-      void queryClient.invalidateQueries({ queryKey: ['llm-conversation', nextConversationId] })
-      void queryClient.invalidateQueries({ queryKey: ['llm-conversations'] })
+      const userMessage = activeTurn.turn?.user_message ?? makeClientMessage('user', message)
+      const assistantMessage = makeAssistantClientMessage(response, activeTurn.turn?.assistant_message)
+      syncConversationTurn(
+        response.conversation,
+        userMessage,
+        assistantMessage,
+        activeTurn.baseConversationId,
+      )
     } catch (error) {
-      setInput(message)
-      syncComposerHeight(textareaRef.current)
-      if (isAbortError(error)) {
-        return
+      if (!activeTurn.turn && !activeTurn.suppressInputRestore && !activeTurn.queuedFollowUp) {
+        setInput(message)
+        syncComposerHeight(textareaRef.current)
       }
 
-      if (isRateLimitError(error)) {
-        setSystemNotice({
-          kind: 'rate_limit',
-          title: 'Rate limited',
-          message: 'The model provider is rate limiting this conversation right now. Wait a moment, then send again.',
-        })
-      } else {
-        addToast({
-          type: 'error',
-          title: 'Failed to send message',
-          message: error instanceof Error ? error.message : 'Unknown error',
-        })
+      await recoverPartialTurn(activeTurn)
+
+      if (!isAbortError(error)) {
+        if (isRateLimitError(error)) {
+          setSystemNotice({
+            kind: 'rate_limit',
+            title: 'Rate limited',
+            message: 'The model provider is rate limiting this conversation right now. Wait a moment, then send again.',
+          })
+        } else {
+          addToast({
+            type: 'error',
+            title: 'Failed to send message',
+            message: error instanceof Error ? error.message : 'Unknown error',
+          })
+        }
       }
     } finally {
       if (streamAbortRef.current === controller) {
         streamAbortRef.current = null
       }
+
+      const queuedFollowUp = activeTurn.queuedFollowUp
+      activeStreamingTurnRef.current = null
       setIsSending(false)
       setSendingDraft(null)
-      setStreamingTranscript([])
-      setStreamingUsage(null)
+      replaceStreamingTranscript([])
+      replaceStreamingUsage(null)
+
+      if (queuedFollowUp) {
+        void startStreamingTurn(
+          queuedFollowUp.message,
+          queuedFollowUp.settings,
+          queuedFollowUp.conversationId ?? activeTurn.turn?.conversation_id ?? activeTurn.baseConversationId,
+        )
+      }
     }
+  }
+
+  async function handleSend() {
+    const message = input.trim()
+    if (!message || !currentSettings.providerId) {
+      return
+    }
+
+    if (isSending) {
+      if (!activeStreamingTurnRef.current) {
+        return
+      }
+
+      activeStreamingTurnRef.current.queuedFollowUp = {
+        message,
+        settings: { ...currentSettings },
+        conversationId: activeStreamingTurnRef.current.turn?.conversation_id ?? activeStreamingTurnRef.current.baseConversationId,
+      }
+      activeStreamingTurnRef.current.suppressInputRestore = true
+      setInput('')
+      syncComposerHeight(textareaRef.current)
+      streamAbortRef.current?.abort()
+      return
+    }
+
+    await startStreamingTurn(message, { ...currentSettings }, conversationId)
   }
 
   async function handleSaveSettings() {
@@ -752,7 +950,7 @@ export default function LLMChat() {
                 onKeyDown={handleComposerKeyDown}
                 placeholder={conversationId ? 'Reply in this conversation…' : 'Message Emerald about infrastructure, pipelines, or local tooling…'}
                 className="min-h-[92px] max-h-56 w-full resize-none border-0 bg-transparent px-4 pb-2 pt-4 text-sm text-text placeholder:text-text-dimmed focus:outline-none"
-                disabled={isSending || providers.length === 0}
+                disabled={providers.length === 0}
                 rows={1}
               />
               <div className="flex flex-wrap items-end justify-between gap-3 px-4 pb-4 pt-2">
@@ -878,24 +1076,24 @@ export default function LLMChat() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (isSending) {
+                    if (isSending && !canQueueFollowUp) {
                       handleStopSending()
                       return
                     }
                     void handleSend()
                   }}
-                  disabled={isSending ? false : !canSend}
+                  disabled={isSending ? !canQueueFollowUp && !streamAbortRef.current : !canSend}
                   className={cn(
                     'inline-flex h-10 w-10 items-center justify-center rounded-lg border transition-colors',
-                    isSending
+                    isSending && !canQueueFollowUp
                       ? 'border-red-500/40 bg-red-500/12 text-red-300 hover:bg-red-500/18'
-                      : canSend
+                      : canSend || canQueueFollowUp
                         ? 'border-accent bg-accent text-white hover:bg-accent-hover'
                         : 'border-border bg-bg-input text-text-dimmed',
                   )}
-                  aria-label={isSending ? 'Stop response' : 'Send message'}
+                  aria-label={isSending && !canQueueFollowUp ? 'Stop response' : isSending ? 'Queue follow-up message' : 'Send message'}
                 >
-                  {isSending ? <Square className="h-4 w-4 fill-current" /> : <Send className="h-4 w-4" />}
+                  {isSending && !canQueueFollowUp ? <Square className="h-4 w-4 fill-current" /> : <Send className="h-4 w-4" />}
                 </button>
               </div>
             </div>
@@ -962,14 +1160,11 @@ function ConversationRail({
                   onClick={() => onSelectConversation(conversation.id)}
                   className="min-w-0 flex-1 rounded-lg px-2 py-1.5 text-left"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className={cn('truncate text-sm font-medium', active ? 'text-text' : 'text-text-muted')}>{conversation.title}</p>
-                      <p className="mt-1 line-clamp-2 text-xs text-text-dimmed">
-                        Updated {formatSidebarTimestamp(conversation.last_message_at)}
-                      </p>
-                    </div>
-                    <div className={cn('mt-0.5 h-2.5 w-2.5 rounded-full', active ? 'bg-accent' : 'bg-transparent')} />
+                  <div className="min-w-0">
+                    <p className={cn('truncate text-sm font-medium', active ? 'text-text' : 'text-text-muted')}>{conversation.title}</p>
+                    <p className="mt-1 line-clamp-2 text-xs text-text-dimmed">
+                      Updated {formatSidebarTimestamp(conversation.last_message_at)}
+                    </p>
                   </div>
                 </button>
 
@@ -1231,8 +1426,14 @@ function ToolStepCard({
   part: Extract<AssistantTranscriptPart, { kind: 'tool' }>
   compact?: boolean
 }) {
+  const display = part.toolResult.display
   const argumentsPayload = part.toolResult.arguments ?? safeParseJSON(part.toolCall?.function.arguments)
-  const hasDetails = argumentsPayload !== undefined || part.toolResult.result !== undefined || Boolean(part.toolResult.error)
+  const isStructured = Boolean(display && display.kind !== 'generic')
+  const hasPreview = Boolean(display?.preview?.trim())
+  const hasDiff = Boolean(display?.diff?.trim())
+  const hasDetails = isStructured
+    ? hasPreview || hasDiff || argumentsPayload !== undefined || Boolean(part.toolResult.error)
+    : argumentsPayload !== undefined || part.toolResult.result !== undefined || Boolean(part.toolResult.error)
   const statusLabel = part.status === 'running' ? 'Running' : part.status === 'failed' ? 'Failed' : 'Done'
 
   const statusClasses =
@@ -1241,23 +1442,53 @@ function ToolStepCard({
       : part.status === 'failed'
         ? 'border-red-500/30 bg-red-500/10 text-red-300'
         : 'border-accent/25 bg-accent/10 text-accent'
+  const containerClasses =
+    part.status === 'failed'
+      ? 'border-red-500/45 bg-red-500/5'
+      : part.status === 'running'
+        ? 'border-border/70 bg-bg/60'
+        : 'border-accent/50 bg-accent/5'
 
   const content = (
     <>
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 items-start gap-2">
         <span
           className={cn(
-            'inline-flex h-5 items-center rounded-full border px-2 text-[10px] font-semibold uppercase tracking-[0.14em]',
+            'inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[10px] font-semibold uppercase tracking-[0.14em]',
             statusClasses,
           )}
         >
           {part.status === 'running' && <Loader2 className="mr-1 h-2.5 w-2.5 animate-spin" />}
           {statusLabel}
         </span>
-        <p className="truncate font-mono text-xs text-text">{part.label}</p>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            {display && (
+              <span className="inline-flex h-5 shrink-0 items-center rounded-full border border-border/70 bg-bg px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-dimmed">
+                {formatToolDisplayKind(display.kind)}
+              </span>
+            )}
+            <p className="truncate font-mono text-xs text-text">{display?.title || part.label}</p>
+          </div>
+          {display?.summary && (
+            <p className={cn('mt-1 truncate text-[11px] text-text-muted', compact && 'text-[10px]')}>
+              {display.summary}
+            </p>
+          )}
+          {hasFileChangeStats(display) && (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-text-dimmed">
+              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300">
+                +{getToolStatNumber(display, 'additions')}
+              </span>
+              <span className="rounded-full border border-red-500/20 bg-red-500/10 px-1.5 py-0.5 text-red-300">
+                -{getToolStatNumber(display, 'deletions')}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-text-dimmed">
-        <span>{part.toolResult.error ? 'Tool error' : 'Tool use'}</span>
+        <span>{part.toolResult.error ? 'Tool error' : display?.summary ? 'Workspace tool' : 'Tool use'}</span>
         {hasDetails && <ChevronDown className="h-3.5 w-3.5" />}
       </div>
     </>
@@ -1266,7 +1497,8 @@ function ToolStepCard({
   if (!hasDetails) {
     return (
       <div className={cn(
-        'rounded-r-lg border-l-2 border-accent/50 bg-accent/5 px-3 py-2',
+        'rounded-r-lg border-l-2 px-3 py-2',
+        containerClasses,
         compact ? 'text-xs' : '',
       )}>
         <div className="flex items-center gap-3">
@@ -1277,11 +1509,35 @@ function ToolStepCard({
   }
 
   return (
-    <details className="group rounded-r-lg border-l-2 border-accent/50 bg-accent/5">
+    <details className={cn('group rounded-r-lg border-l-2', containerClasses)}>
       <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2">
         {content}
       </summary>
       <div className="space-y-2 border-t border-border/60 px-3 pb-3 pt-2">
+        {display?.preview && (
+          <div>
+            <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-text-dimmed">
+              {display.kind === 'read' ? 'Preview' : 'Matches'}
+            </p>
+            {display.kind === 'read' ? (
+              <ReadPreview
+                preview={display.preview}
+                path={display.path || display.title}
+                startLine={getToolStatNumber(display, 'start_line') || 1}
+              />
+            ) : (
+              <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-bg/80 px-2.5 py-2 font-mono text-[11px] text-text-muted">
+                {display.preview}
+              </pre>
+            )}
+          </div>
+        )}
+        {display?.diff && (
+          <div>
+            <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-text-dimmed">Diff</p>
+            <DiffPreview diff={display.diff} path={display.path || display.title} />
+          </div>
+        )}
         {argumentsPayload !== undefined && (
           <div>
             <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-text-dimmed">Arguments</p>
@@ -1290,7 +1546,7 @@ function ToolStepCard({
             </pre>
           </div>
         )}
-        {(part.toolResult.error || part.toolResult.result !== undefined) && (
+        {(part.toolResult.error || (!isStructured && part.toolResult.result !== undefined)) && (
           <div>
             <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-text-dimmed">
               {part.toolResult.error ? 'Error' : 'Result'}
@@ -1803,20 +2059,77 @@ function makeClientMessage(role: 'user' | 'assistant', content: string): LLMConv
   }
 }
 
-function makeAssistantClientMessage(response: LLMChatResponse): LLMConversationMessage {
+function makeAssistantClientMessage(
+  response: LLMChatResponse,
+  base?: LLMConversationMessage,
+): LLMConversationMessage {
   return {
-    ...makeClientMessage('assistant', response.content || ''),
-    reasoning: response.reasoning,
-    tool_calls: response.tool_calls,
-    tool_results: response.tool_results,
-    context_messages: response.context_messages,
-    usage: response.usage,
+    ...(base ?? makeClientMessage('assistant', response.content || '')),
+    content: response.content || base?.content || '',
+    reasoning: response.reasoning ?? base?.reasoning,
+    tool_calls: response.tool_calls ?? base?.tool_calls,
+    tool_results: response.tool_results ?? base?.tool_results,
+    context_messages: response.context_messages ?? base?.context_messages,
+    usage: response.usage ?? base?.usage,
   }
+}
+
+function buildPartialAssistantMessage(
+  base: LLMConversationMessage,
+  transcript: AssistantTranscriptPart[],
+  usage: LLMUsage | null,
+): LLMConversationMessage {
+  const contextMessages = buildContextMessagesFromTranscript(transcript)
+  const toolCalls = collectToolCallsFromTranscript(transcript)
+  const toolResults = collectToolResultsFromTranscript(transcript)
+
+  return {
+    ...base,
+    content: extractAssistantContentFromContextMessages(contextMessages) || base.content,
+    reasoning: extractSingleReasoningFromContextMessages(contextMessages) || base.reasoning,
+    tool_calls: toolCalls.length > 0 ? toolCalls : base.tool_calls,
+    tool_results: toolResults.length > 0 ? toolResults : base.tool_results,
+    context_messages: contextMessages.length > 0 ? contextMessages : base.context_messages,
+    usage: usage ?? base.usage,
+  }
+}
+
+function upsertConversationTurnMessages(
+  previous: LLMConversationMessage[] | undefined,
+  messages: LLMConversationMessage[],
+): LLMConversationMessage[] {
+  const next = [...(previous ?? [])]
+
+  for (const message of messages) {
+    const existingIndex = next.findIndex((item) => item.id === message.id)
+    if (existingIndex === -1) {
+      next.push(message)
+      continue
+    }
+    next[existingIndex] = message
+  }
+
+  next.sort((left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime())
+  return next
+}
+
+function isVisibleConversationMessage(message: LLMConversationMessage): boolean {
+  if (message.role === 'user') {
+    return Boolean(message.content.trim())
+  }
+
+  if (message.content.trim() || message.reasoning?.trim()) {
+    return true
+  }
+  if ((message.tool_calls?.length ?? 0) > 0 || (message.tool_results?.length ?? 0) > 0) {
+    return true
+  }
+  return (message.context_messages?.length ?? 0) > 0
 }
 
 function enqueueStreamingDelta(
   delta: string,
-  setStreamingTranscript: Dispatch<SetStateAction<AssistantTranscriptPart[]>>,
+  updateStreamingTranscript: (updater: (previous: AssistantTranscriptPart[]) => AssistantTranscriptPart[]) => void,
   queueRef: MutableRefObject<string[]>,
   timerRef: MutableRefObject<number | null>,
   resolversRef: MutableRefObject<Array<() => void>>,
@@ -1831,11 +2144,11 @@ function enqueueStreamingDelta(
     return
   }
 
-  drainStreamingDeltaQueue(setStreamingTranscript, queueRef, timerRef, resolversRef)
+  drainStreamingDeltaQueue(updateStreamingTranscript, queueRef, timerRef, resolversRef)
 }
 
 function drainStreamingDeltaQueue(
-  setStreamingTranscript: Dispatch<SetStateAction<AssistantTranscriptPart[]>>,
+  updateStreamingTranscript: (updater: (previous: AssistantTranscriptPart[]) => AssistantTranscriptPart[]) => void,
   queueRef: MutableRefObject<string[]>,
   timerRef: MutableRefObject<number | null>,
   resolversRef: MutableRefObject<Array<() => void>>,
@@ -1847,7 +2160,7 @@ function drainStreamingDeltaQueue(
     return
   }
 
-  setStreamingTranscript((previous) => appendStreamingAssistantDelta(previous, next))
+  updateStreamingTranscript((previous) => appendStreamingAssistantDelta(previous, next))
 
   const remaining = queueRef.current.length
   const delay =
@@ -1857,7 +2170,7 @@ function drainStreamingDeltaQueue(
     20
 
   timerRef.current = window.setTimeout(() => {
-    drainStreamingDeltaQueue(setStreamingTranscript, queueRef, timerRef, resolversRef)
+    drainStreamingDeltaQueue(updateStreamingTranscript, queueRef, timerRef, resolversRef)
   }, delay)
 }
 
@@ -1917,6 +2230,105 @@ function splitStreamingDelta(delta: string): string[] {
   }
 
   return parts.filter((part) => part.length > 0)
+}
+
+function buildContextMessagesFromTranscript(transcript: AssistantTranscriptPart[]): LLMContextMessage[] {
+  const messages: LLMContextMessage[] = []
+  let pendingAssistant: LLMContextMessage | null = null
+
+  const flushPendingAssistant = () => {
+    if (!pendingAssistant) {
+      return
+    }
+    if (
+      pendingAssistant.content?.trim()
+      || pendingAssistant.reasoning?.trim()
+      || (pendingAssistant.tool_calls?.length ?? 0) > 0
+    ) {
+      messages.push(pendingAssistant)
+    }
+    pendingAssistant = null
+  }
+
+  for (const part of transcript) {
+    switch (part.kind) {
+      case 'reasoning':
+        if (!pendingAssistant || (pendingAssistant.tool_calls?.length ?? 0) > 0) {
+          flushPendingAssistant()
+          pendingAssistant = { role: 'assistant' }
+        }
+        pendingAssistant.reasoning = `${pendingAssistant.reasoning ?? ''}${part.reasoning}`
+        break
+      case 'assistant':
+        if (!pendingAssistant || (pendingAssistant.tool_calls?.length ?? 0) > 0) {
+          flushPendingAssistant()
+          pendingAssistant = { role: 'assistant' }
+        }
+        pendingAssistant.content = `${pendingAssistant.content ?? ''}${part.content}`
+        break
+      case 'tool':
+        if (!pendingAssistant || (pendingAssistant.tool_calls?.length ?? 0) > 0) {
+          flushPendingAssistant()
+          pendingAssistant = { role: 'assistant' }
+        }
+        if (part.toolCall) {
+          pendingAssistant.tool_calls = [...(pendingAssistant.tool_calls ?? []), part.toolCall]
+        }
+        flushPendingAssistant()
+        if (part.status !== 'running') {
+          messages.push({
+            role: 'tool',
+            name: part.toolResult.tool,
+            tool_call_id: part.toolCall?.id,
+            content: JSON.stringify(buildToolContextPayload(part.toolResult)),
+          })
+        }
+        break
+    }
+  }
+
+  flushPendingAssistant()
+  return messages
+}
+
+function buildToolContextPayload(toolResult: LLMToolResult): Record<string, unknown> {
+  const payload: Record<string, unknown> = {}
+  if (toolResult.error) {
+    payload.error = toolResult.error
+  } else if (toolResult.result !== undefined) {
+    payload.result = toolResult.result
+  }
+  if (toolResult.display) {
+    payload.display = toolResult.display
+  }
+  return payload
+}
+
+function collectToolCallsFromTranscript(transcript: AssistantTranscriptPart[]): LLMToolCall[] {
+  return transcript
+    .filter((part): part is Extract<AssistantTranscriptPart, { kind: 'tool' }> => part.kind === 'tool' && Boolean(part.toolCall))
+    .map((part) => part.toolCall as LLMToolCall)
+}
+
+function collectToolResultsFromTranscript(transcript: AssistantTranscriptPart[]): LLMToolResult[] {
+  return transcript
+    .filter((part): part is Extract<AssistantTranscriptPart, { kind: 'tool' }> => part.kind === 'tool' && part.status !== 'running')
+    .map((part) => part.toolResult)
+}
+
+function extractAssistantContentFromContextMessages(messages: LLMContextMessage[]): string {
+  return messages
+    .filter((message) => message.role === 'assistant' && Boolean(message.content?.trim()))
+    .map((message) => message.content?.trim())
+    .filter((value): value is string => Boolean(value))
+    .join('\n\n')
+}
+
+function extractSingleReasoningFromContextMessages(messages: LLMContextMessage[]): string {
+  if (messages.length !== 1 || messages[0]?.role !== 'assistant') {
+    return ''
+  }
+  return messages[0].reasoning?.trim() ?? ''
 }
 
 function isRateLimitError(error: unknown): boolean {
@@ -2006,7 +2418,7 @@ function upsertStreamingToolStep(
         id: `stream-tool-${id}`,
         kind: 'tool',
         toolCall,
-        label: toolCall?.function.name ?? toolResult?.tool ?? 'Tool',
+        label: toolResult?.display?.title ?? toolCall?.function.name ?? toolResult?.tool ?? 'Tool',
         status: nextStatus,
         toolResult: toolResult ?? {
           tool: toolCall?.function.name ?? 'Tool',
@@ -2024,7 +2436,7 @@ function upsertStreamingToolStep(
   next[existingIndex] = {
     ...existingPart,
     toolCall: toolCall ?? existingPart.toolCall,
-    label: toolCall?.function.name ?? existingPart.label,
+    label: toolResult?.display?.title ?? toolCall?.function.name ?? existingPart.label,
     status: nextStatus,
     toolResult: toolResult ?? existingPart.toolResult,
   }
@@ -2051,6 +2463,249 @@ function formatInspectableValue(value: unknown): string {
     return value
   }
   return JSON.stringify(value, null, 2)
+}
+
+function formatToolDisplayKind(kind: NonNullable<LLMToolResult['display']>['kind']): string {
+  switch (kind) {
+    case 'list_directory':
+      return 'Dir'
+    case 'glob':
+      return 'Glob'
+    case 'grep':
+      return 'Search'
+    case 'read':
+      return 'Read'
+    case 'diff':
+      return 'Diff'
+    default:
+      return 'Tool'
+  }
+}
+
+function DiffPreview({ diff, path }: { diff: string; path?: string }) {
+  const lines = splitDiffLines(diff)
+  const language = resolveCodeLanguage(path, lines)
+
+  return (
+    <pre className="chat-diff-block overflow-x-auto rounded-md bg-bg/80 text-[11px] text-text-muted">
+      <code className="block min-w-full">
+        {lines.map((line, index) => (
+          <DiffPreviewLine key={`${index}:${line}`} line={line} language={language} />
+        ))}
+      </code>
+    </pre>
+  )
+}
+
+function DiffPreviewLine({ line, language }: { line: string; language: string | null }) {
+  const presentation = buildDiffLinePresentation(line)
+
+  if (!presentation.highlight) {
+    return (
+      <span className={cn('chat-diff-line', presentation.className)}>
+        {presentation.content.length > 0 ? presentation.content : ' '}
+      </span>
+    )
+  }
+
+  return (
+    <span className={cn('chat-diff-line', presentation.className)}>
+      <span className="chat-diff-prefix">{presentation.prefix === ' ' ? '\u00A0' : presentation.prefix}</span>
+      <span
+        className="chat-diff-code hljs"
+        dangerouslySetInnerHTML={{ __html: highlightDiffCodeLine(presentation.content, language) }}
+      />
+    </span>
+  )
+}
+
+function splitDiffLines(diff: string): string[] {
+  const lines = diff.replace(/\r\n/g, '\n').split('\n')
+  if (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop()
+  }
+  return lines
+}
+
+function ReadPreview({
+  preview,
+  path,
+  startLine,
+}: {
+  preview: string
+  path?: string
+  startLine: number
+}) {
+  const lines = parseReadPreviewLines(preview, startLine)
+  const language = resolveCodeLanguage(path, [])
+
+  return (
+    <pre className="chat-code-block overflow-x-auto rounded-md bg-bg/80 text-[11px] text-text-muted">
+      <code className="block min-w-full">
+        {lines.map((line, index) => (
+          <span key={`${index}:${line.number}:${line.content}`} className="chat-code-line">
+            <span className="chat-code-gutter">{line.number}</span>
+            <span
+              className="chat-code-content hljs"
+              dangerouslySetInnerHTML={{ __html: highlightCodeLine(line.content, language) }}
+            />
+          </span>
+        ))}
+      </code>
+    </pre>
+  )
+}
+
+function parseReadPreviewLines(preview: string, startLine: number): Array<{ number: number; content: string }> {
+  const sourceLines = preview.replace(/\r\n/g, '\n').split('\n')
+  if (sourceLines.length > 0 && sourceLines[sourceLines.length - 1] === '') {
+    sourceLines.pop()
+  }
+
+  return sourceLines.map((line, index) => {
+    const match = line.match(/^(\d+):\s?(.*)$/)
+    if (match) {
+      return {
+        number: Number.parseInt(match[1], 10),
+        content: match[2] ?? '',
+      }
+    }
+
+    return {
+      number: startLine + index,
+      content: line,
+    }
+  })
+}
+
+function classifyDiffLine(line: string): string {
+  if (line.startsWith('+++') || line.startsWith('---')) {
+    return 'chat-diff-line--file'
+  }
+  if (line.startsWith('@@')) {
+    return 'chat-diff-line--hunk'
+  }
+  if (line.startsWith('+')) {
+    return 'chat-diff-line--addition'
+  }
+  if (line.startsWith('-')) {
+    return 'chat-diff-line--deletion'
+  }
+  if (line.startsWith('\\')) {
+    return 'chat-diff-line--note'
+  }
+  return 'chat-diff-line--context'
+}
+
+function buildDiffLinePresentation(line: string): {
+  className: string
+  content: string
+  highlight: boolean
+  prefix: string
+} {
+  if (line.startsWith('+++') || line.startsWith('---')) {
+    return { className: 'chat-diff-line--file', content: line, highlight: false, prefix: '' }
+  }
+  if (line.startsWith('@@')) {
+    return { className: 'chat-diff-line--hunk', content: line, highlight: false, prefix: '' }
+  }
+  if (line.startsWith('\\')) {
+    return { className: 'chat-diff-line--note', content: line, highlight: false, prefix: '' }
+  }
+  if (line.startsWith('+')) {
+    return { className: 'chat-diff-line--addition', content: line.slice(1), highlight: true, prefix: '+' }
+  }
+  if (line.startsWith('-')) {
+    return { className: 'chat-diff-line--deletion', content: line.slice(1), highlight: true, prefix: '-' }
+  }
+  if (line.startsWith(' ')) {
+    return { className: 'chat-diff-line--context', content: line.slice(1), highlight: true, prefix: ' ' }
+  }
+  return { className: 'chat-diff-line--context', content: line, highlight: true, prefix: ' ' }
+}
+
+function highlightDiffCodeLine(content: string, language: string | null): string {
+  return highlightCodeLine(content, language)
+}
+
+function highlightCodeLine(content: string, language: string | null): string {
+  if (!content) {
+    return '&nbsp;'
+  }
+  if (!language) {
+    return escapeHTML(content)
+  }
+
+  try {
+    return hljs.highlight(content, { language, ignoreIllegals: true }).value || escapeHTML(content)
+  } catch {
+    return escapeHTML(content)
+  }
+}
+
+function resolveCodeLanguage(path: string | undefined, lines: string[]): string | null {
+  const diffPath = normalizeDiffPath(path?.trim()) || inferDiffPath(lines)
+  if (!diffPath) {
+    return null
+  }
+
+  const normalized = diffPath.toLowerCase()
+  const basename = normalized.split(/[\\/]/).pop() ?? normalized
+  const extension = basename.includes('.') ? basename.slice(basename.lastIndexOf('.') + 1) : ''
+
+  const aliasCandidates = [
+    DIFF_LANGUAGE_BY_FILENAME[basename],
+    DIFF_LANGUAGE_BY_EXTENSION[extension],
+    extension || undefined,
+  ]
+
+  for (const candidate of aliasCandidates) {
+    if (candidate && hljs.getLanguage(candidate)) {
+      return candidate
+    }
+  }
+
+  return null
+}
+
+function inferDiffPath(lines: string[]): string | null {
+  for (const line of lines) {
+    if (!line.startsWith('+++ ') && !line.startsWith('--- ')) {
+      continue
+    }
+
+    const value = normalizeDiffPath(line.slice(4).trim())
+    if (value && value !== '/dev/null') {
+      return value
+    }
+  }
+
+  return null
+}
+
+function normalizeDiffPath(path?: string): string | null {
+  if (!path) {
+    return null
+  }
+
+  const normalized = path.replace(/^["']|["']$/g, '').replace(/^[ab]\//, '')
+  return normalized || null
+}
+
+function escapeHTML(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+}
+
+function getToolStatNumber(display: LLMToolResult['display'], key: string): number {
+  const value = display?.stats?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function hasFileChangeStats(display: LLMToolResult['display']): boolean {
+  return Boolean(display?.kind === 'diff' && (display.stats?.additions !== undefined || display.stats?.deletions !== undefined))
 }
 
 function supportsReasoningEffort(provider?: LLMProvider): boolean {

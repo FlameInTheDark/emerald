@@ -75,7 +75,7 @@ export default function PluginBundleSettings() {
 
           {!isLoading && plugins.length === 0 && (
             <div className="rounded-xl border border-dashed border-border px-4 py-6 text-sm text-text-muted">
-              No plugin bundles discovered yet. Add bundles under <code>.agents/plugins</code> or configure <code>AUTOMATOR_PLUGINS_DIR</code>.
+              No plugin bundles discovered yet. Add bundles under <code>.agents/plugins</code> or configure <code>EMERALD_PLUGINS_DIR</code>.
             </div>
           )}
 

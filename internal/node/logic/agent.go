@@ -70,6 +70,7 @@ func (e *LLMAgentNode) Execute(ctx context.Context, config json.RawMessage, inpu
 	if err != nil {
 		return nil, fmt.Errorf("initialize provider: %w", err)
 	}
+	contextWindow := llm.ResolveContextWindowWithDiscovery(ctx, providerConfig)
 
 	toolRegistry, toolNames, err := buildAgentToolRegistry(ctx, input, cfg.EnableSkills, e.Skills)
 	if err != nil {
@@ -96,8 +97,10 @@ func (e *LLMAgentNode) Execute(ctx context.Context, config json.RawMessage, inpu
 			},
 		},
 		toolRegistry,
-		"",
-		llm.DefaultMaxToolChatRounds,
+		llm.ToolChatOptions{
+			ContextWindow: contextWindow,
+			MaxRounds:     llm.DefaultMaxToolChatRounds,
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("run agent with provider %s: %w", providerModel.Name, err)

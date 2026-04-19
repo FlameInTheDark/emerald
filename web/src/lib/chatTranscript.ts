@@ -95,6 +95,7 @@ function buildTranscriptFromContextMessages(messages: LLMContextMessage[]): Assi
         const toolResult = buildToolResultFromContextMessage(message, existingPart.toolCall)
         parts[existingIndex] = {
           ...existingPart,
+          label: toolResult.display?.title || existingPart.toolCall?.function.name || toolResult.tool,
           status: toolResult.error ? 'failed' : 'completed',
           toolResult,
         }
@@ -106,7 +107,7 @@ function buildTranscriptFromContextMessages(messages: LLMContextMessage[]): Assi
     parts.push({
       id: `tool-${toolCallID ?? index}`,
       kind: 'tool',
-      label: toolResult.tool,
+      label: toolResult.display?.title || toolResult.tool,
       status: toolResult.error ? 'failed' : 'completed',
       toolResult,
     })
@@ -141,7 +142,7 @@ function buildTranscriptFromAssistantMessage(message: LLMConversationMessage): A
       id: `${message.id}-tool-${toolCall.id}`,
       kind: 'tool',
       toolCall,
-      label: toolCall.function.name,
+      label: matchingResult?.display?.title || toolCall.function.name,
       status: matchingResult ? (matchingResult.error ? 'failed' : 'completed') : 'running',
       toolResult: matchingResult ?? {
         tool: toolCall.function.name,
@@ -153,7 +154,7 @@ function buildTranscriptFromAssistantMessage(message: LLMConversationMessage): A
     parts.push({
       id: `${message.id}-tool-extra-${index}`,
       kind: 'tool',
-      label: toolResult.tool,
+      label: toolResult.display?.title || toolResult.tool,
       status: toolResult.error ? 'failed' : 'completed',
       toolResult,
     })
@@ -169,10 +170,11 @@ function buildToolResultFromContextMessage(message: LLMContextMessage, toolCall?
     arguments: toolCall ? parseToolArguments(toolCall.function.arguments) : undefined,
     result: parsedPayload.result,
     error: parsedPayload.error,
+    display: parsedPayload.display,
   }
 }
 
-function parseToolPayload(content?: string): Pick<LLMToolResult, 'result' | 'error'> {
+function parseToolPayload(content?: string): Pick<LLMToolResult, 'result' | 'error' | 'display'> {
   if (!content?.trim()) {
     return {}
   }
@@ -180,10 +182,16 @@ function parseToolPayload(content?: string): Pick<LLMToolResult, 'result' | 'err
   try {
     const parsed = JSON.parse(content) as Record<string, unknown>
     if (typeof parsed.error === 'string') {
-      return { error: parsed.error }
+      return {
+        error: parsed.error,
+        display: isToolDisplay(parsed.display) ? parsed.display : undefined,
+      }
     }
     if (Object.prototype.hasOwnProperty.call(parsed, 'result')) {
-      return { result: parsed.result }
+      return {
+        result: parsed.result,
+        display: isToolDisplay(parsed.display) ? parsed.display : undefined,
+      }
     }
     return { result: parsed }
   } catch {
@@ -197,4 +205,8 @@ function parseToolArguments(rawArguments: string): unknown {
   } catch {
     return rawArguments
   }
+}
+
+function isToolDisplay(value: unknown): value is NonNullable<LLMToolResult['display']> {
+  return typeof value === 'object' && value !== null && 'kind' in value
 }

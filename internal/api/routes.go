@@ -28,6 +28,7 @@ import (
 	"github.com/FlameInTheDark/emerald/internal/skills"
 	"github.com/FlameInTheDark/emerald/internal/templateops"
 	"github.com/FlameInTheDark/emerald/internal/triggers"
+	"github.com/FlameInTheDark/emerald/internal/webtools"
 	"github.com/FlameInTheDark/emerald/internal/ws"
 )
 
@@ -98,6 +99,7 @@ func New(cfg Config) *fiber.App {
 	secretHandler := handlers.NewSecretHandler(secretStore)
 	appConfigStore := query.NewAppConfigStore(cfg.DB.DB)
 	assistantProfileStore := assistants.NewStore(appConfigStore)
+	webToolsStore := webtools.NewStore(appConfigStore, secretStore)
 
 	pipelineStore := query.NewPipelineStore(cfg.DB.DB)
 	templateStore := query.NewTemplateStore(cfg.DB.DB)
@@ -132,9 +134,10 @@ func New(cfg Config) *fiber.App {
 		cfg.ExecutionRunner,
 	)
 	webhookHandler := handlers.NewWebhookHandler(cfg.TriggerService)
-	llmChatHandler := handlers.NewLLMChatHandler(llmProviderStore, clusterStore, kubernetesClusterStore, pipelineStore, chatStore, cfg.ExecutionRunner, cfg.Scheduler, cfg.SkillStore, cfg.ShellRunner, assistantProfileStore)
+	llmChatHandler := handlers.NewLLMChatHandler(llmProviderStore, clusterStore, kubernetesClusterStore, pipelineStore, chatStore, cfg.ExecutionRunner, cfg.Scheduler, cfg.SkillStore, cfg.ShellRunner, assistantProfileStore, webToolsStore)
 	editorAssistantHandler := handlers.NewEditorAssistantHandler(llmProviderStore, assistantProfileStore, cfg.SkillStore, nodeDefinitionService)
 	assistantProfileHandler := handlers.NewAssistantProfileHandler(assistantProfileStore)
+	webToolsHandler := handlers.NewWebToolsHandler(webToolsStore)
 	executionHandler := handlers.NewExecutionHandler(executionStore, cfg.ExecutionRunner)
 
 	api := app.Group("/api/v1")
@@ -238,6 +241,10 @@ func New(cfg Config) *fiber.App {
 	assistantProfiles.Get("/:scope", assistantProfileHandler.Get)
 	assistantProfiles.Put("/:scope", assistantProfileHandler.Update)
 	assistantProfiles.Post("/:scope/restore-defaults", assistantProfileHandler.RestoreDefaults)
+
+	webToolRoutes := api.Group("/web-tools")
+	webToolRoutes.Get("/config", webToolsHandler.Get)
+	webToolRoutes.Put("/config", webToolsHandler.Update)
 
 	executions := api.Group("/executions")
 	executions.Get("/pipelines/:id", executionHandler.ListByPipeline)

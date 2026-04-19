@@ -331,6 +331,372 @@ describe('LLMChat page', () => {
     await waitFor(() => expect(screen.getAllByText(/Streaming now/).length).toBeGreaterThan(0))
   })
 
+  it('keeps streamed progress after stopping once the turn has started', async () => {
+    const user = userEvent.setup()
+
+    mockApi.llm.conversations.get.mockImplementation(async (id: string) => {
+      if (id === 'conv-partial') {
+        return {
+          id: 'conv-partial',
+          title: 'Keep partial work',
+          provider_id: 'provider-1',
+          proxmox_enabled: true,
+          proxmox_cluster_id: 'cluster-1',
+          kubernetes_enabled: false,
+          kubernetes_cluster_id: undefined,
+          compaction_count: 0,
+          compacted_at: undefined,
+          context_window: 128000,
+          context_token_count: 1000,
+          last_prompt_tokens: 0,
+          last_completion_tokens: 0,
+          last_total_tokens: 0,
+          last_message_at: '2026-04-08T10:06:00Z',
+          created_at: '2026-04-08T10:06:00Z',
+          updated_at: '2026-04-08T10:06:00Z',
+          messages: [
+            {
+              id: 'user-partial',
+              role: 'user',
+              content: 'Keep partial work',
+              created_at: '2026-04-08T10:06:00Z',
+            },
+            {
+              id: 'assistant-partial',
+              role: 'assistant',
+              content: 'Partial response',
+              created_at: '2026-04-08T10:06:01Z',
+            },
+          ],
+        }
+      }
+
+      return {
+        id: 'conv-1',
+        title: 'Existing conversation',
+        provider_id: 'provider-1',
+        proxmox_enabled: true,
+        proxmox_cluster_id: 'cluster-1',
+        kubernetes_enabled: false,
+        kubernetes_cluster_id: undefined,
+        compaction_count: 0,
+        compacted_at: undefined,
+        context_window: 128000,
+        context_token_count: 1024,
+        last_prompt_tokens: 10,
+        last_completion_tokens: 5,
+        last_total_tokens: 15,
+        last_message_at: '2026-04-08T10:05:00Z',
+        created_at: '2026-04-08T10:00:00Z',
+        updated_at: '2026-04-08T10:05:00Z',
+        messages: [
+          {
+            id: 'msg-1',
+            role: 'assistant',
+            content: 'Saved answer',
+            created_at: '2026-04-08T10:05:00Z',
+          },
+        ],
+      }
+    })
+
+    mockApi.llm.chatStream.mockImplementationOnce(
+      async (_data: unknown, handlers?: { onEvent?: (event: any) => void; signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          handlers?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'))
+          })
+        }),
+    )
+
+    renderChat('/chat')
+
+    const composer = await screen.findByPlaceholderText(/Message Emerald/i)
+    await waitFor(() => expect(composer).toBeEnabled())
+    await user.type(composer, 'Keep partial work{enter}')
+
+    const streamHandler = mockApi.llm.chatStream.mock.calls[0][1]?.onEvent
+    await act(async () => {
+      streamHandler?.({
+        type: 'turn_started',
+        turn: {
+          conversation_id: 'conv-partial',
+          conversation: {
+            id: 'conv-partial',
+            title: 'Keep partial work',
+            provider_id: 'provider-1',
+            proxmox_enabled: true,
+            proxmox_cluster_id: 'cluster-1',
+            kubernetes_enabled: false,
+            kubernetes_cluster_id: undefined,
+            compaction_count: 0,
+            compacted_at: undefined,
+            context_window: 128000,
+            context_token_count: 1000,
+            last_prompt_tokens: 0,
+            last_completion_tokens: 0,
+            last_total_tokens: 0,
+            last_message_at: '2026-04-08T10:06:00Z',
+            created_at: '2026-04-08T10:06:00Z',
+            updated_at: '2026-04-08T10:06:00Z',
+          },
+          user_message: {
+            id: 'user-partial',
+            role: 'user',
+            content: 'Keep partial work',
+            created_at: '2026-04-08T10:06:00Z',
+          },
+          assistant_message: {
+            id: 'assistant-partial',
+            role: 'assistant',
+            content: '',
+            created_at: '2026-04-08T10:06:01Z',
+          },
+        },
+      })
+      streamHandler?.({ type: 'assistant_delta', delta: 'Partial response' })
+    })
+
+    expect(await screen.findByText(/Partial response/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Stop response/i }))
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-partial'))
+    expect(await screen.findByText(/Partial response/)).toBeInTheDocument()
+    expect(screen.getByText('Keep partial work')).toBeInTheDocument()
+  })
+
+  it('queues a follow-up while streaming and sends it as the next turn', async () => {
+    const user = userEvent.setup()
+    let firstRequestResolved = false
+
+    mockApi.llm.conversations.get.mockImplementation(async (id: string) => {
+      if (id === 'conv-queued') {
+        return {
+          id: 'conv-queued',
+          title: 'Initial task',
+          provider_id: 'provider-1',
+          proxmox_enabled: true,
+          proxmox_cluster_id: 'cluster-1',
+          kubernetes_enabled: false,
+          kubernetes_cluster_id: undefined,
+          compaction_count: 0,
+          compacted_at: undefined,
+          context_window: 128000,
+          context_token_count: 1100,
+          last_prompt_tokens: 10,
+          last_completion_tokens: 5,
+          last_total_tokens: 15,
+          last_message_at: '2026-04-08T10:07:00Z',
+          created_at: '2026-04-08T10:07:00Z',
+          updated_at: '2026-04-08T10:07:00Z',
+          messages: [
+            {
+              id: 'user-queued-1',
+              role: 'user',
+              content: 'Initial task',
+              created_at: '2026-04-08T10:06:00Z',
+            },
+            {
+              id: 'assistant-queued-1',
+              role: 'assistant',
+              content: 'Working on the first task',
+              created_at: '2026-04-08T10:06:01Z',
+            },
+            {
+              id: 'user-queued-2',
+              role: 'user',
+              content: 'Do this instead',
+              created_at: '2026-04-08T10:07:00Z',
+            },
+            {
+              id: 'assistant-queued-2',
+              role: 'assistant',
+              content: 'Updated answer',
+              created_at: '2026-04-08T10:07:01Z',
+            },
+          ],
+        }
+      }
+
+      return {
+        id: 'conv-1',
+        title: 'Existing conversation',
+        provider_id: 'provider-1',
+        proxmox_enabled: true,
+        proxmox_cluster_id: 'cluster-1',
+        kubernetes_enabled: false,
+        kubernetes_cluster_id: undefined,
+        compaction_count: 0,
+        compacted_at: undefined,
+        context_window: 128000,
+        context_token_count: 1024,
+        last_prompt_tokens: 10,
+        last_completion_tokens: 5,
+        last_total_tokens: 15,
+        last_message_at: '2026-04-08T10:05:00Z',
+        created_at: '2026-04-08T10:00:00Z',
+        updated_at: '2026-04-08T10:05:00Z',
+        messages: [
+          {
+            id: 'msg-1',
+            role: 'assistant',
+            content: 'Saved answer',
+            created_at: '2026-04-08T10:05:00Z',
+          },
+        ],
+      }
+    })
+
+    mockApi.llm.chatStream
+      .mockImplementationOnce(
+        async (_data: unknown, handlers?: { onEvent?: (event: any) => void; signal?: AbortSignal }) =>
+          new Promise((_, reject) => {
+            handlers?.signal?.addEventListener('abort', () => {
+              firstRequestResolved = true
+              reject(new DOMException('Aborted', 'AbortError'))
+            })
+          }),
+      )
+      .mockImplementationOnce(async (_data: unknown, handlers?: { onEvent?: (event: any) => void }) => {
+        handlers?.onEvent?.({
+          type: 'turn_started',
+          turn: {
+            conversation_id: 'conv-queued',
+            conversation: {
+              id: 'conv-queued',
+              title: 'Initial task',
+              provider_id: 'provider-1',
+              proxmox_enabled: true,
+              proxmox_cluster_id: 'cluster-1',
+              kubernetes_enabled: false,
+              kubernetes_cluster_id: undefined,
+              compaction_count: 0,
+              compacted_at: undefined,
+              context_window: 128000,
+              context_token_count: 1100,
+              last_prompt_tokens: 10,
+              last_completion_tokens: 5,
+              last_total_tokens: 15,
+              last_message_at: '2026-04-08T10:07:00Z',
+              created_at: '2026-04-08T10:07:00Z',
+              updated_at: '2026-04-08T10:07:00Z',
+            },
+            user_message: {
+              id: 'user-queued-2',
+              role: 'user',
+              content: 'Do this instead',
+              created_at: '2026-04-08T10:07:00Z',
+            },
+            assistant_message: {
+              id: 'assistant-queued-2',
+              role: 'assistant',
+              content: '',
+              created_at: '2026-04-08T10:07:01Z',
+            },
+          },
+        })
+        handlers?.onEvent?.({ type: 'assistant_delta', delta: 'Updated answer' })
+        handlers?.onEvent?.({
+          type: 'usage',
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+          },
+        })
+        return {
+          conversation_id: 'conv-queued',
+          conversation: {
+            id: 'conv-queued',
+            title: 'Initial task',
+            provider_id: 'provider-1',
+            proxmox_enabled: true,
+            proxmox_cluster_id: 'cluster-1',
+            kubernetes_enabled: false,
+            kubernetes_cluster_id: undefined,
+            compaction_count: 0,
+            compacted_at: undefined,
+            context_window: 128000,
+            context_token_count: 1100,
+            last_prompt_tokens: 10,
+            last_completion_tokens: 5,
+            last_total_tokens: 15,
+            last_message_at: '2026-04-08T10:07:00Z',
+            created_at: '2026-04-08T10:07:00Z',
+            updated_at: '2026-04-08T10:07:00Z',
+          },
+          content: 'Updated answer',
+          tool_calls: [],
+          tool_results: [],
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+          },
+        }
+      })
+
+    renderChat('/chat')
+
+    const composer = await screen.findByPlaceholderText(/Message Emerald/i)
+    await waitFor(() => expect(composer).toBeEnabled())
+    await user.type(composer, 'Initial task{enter}')
+
+    const firstStreamHandler = mockApi.llm.chatStream.mock.calls[0][1]?.onEvent
+    await act(async () => {
+      firstStreamHandler?.({
+        type: 'turn_started',
+        turn: {
+          conversation_id: 'conv-queued',
+          conversation: {
+            id: 'conv-queued',
+            title: 'Initial task',
+            provider_id: 'provider-1',
+            proxmox_enabled: true,
+            proxmox_cluster_id: 'cluster-1',
+            kubernetes_enabled: false,
+            kubernetes_cluster_id: undefined,
+            compaction_count: 0,
+            compacted_at: undefined,
+            context_window: 128000,
+            context_token_count: 1000,
+            last_prompt_tokens: 0,
+            last_completion_tokens: 0,
+            last_total_tokens: 0,
+            last_message_at: '2026-04-08T10:06:00Z',
+            created_at: '2026-04-08T10:06:00Z',
+            updated_at: '2026-04-08T10:06:00Z',
+          },
+          user_message: {
+            id: 'user-queued-1',
+            role: 'user',
+            content: 'Initial task',
+            created_at: '2026-04-08T10:06:00Z',
+          },
+          assistant_message: {
+            id: 'assistant-queued-1',
+            role: 'assistant',
+            content: '',
+            created_at: '2026-04-08T10:06:01Z',
+          },
+        },
+      })
+      firstStreamHandler?.({ type: 'assistant_delta', delta: 'Working on the first task' })
+    })
+
+    await user.type(composer, 'Do this instead{enter}')
+
+    await waitFor(() => expect(firstRequestResolved).toBe(true))
+    await waitFor(() => expect(mockApi.llm.chatStream).toHaveBeenCalledTimes(2))
+    expect(mockApi.llm.chatStream.mock.calls[1][0]).toMatchObject({
+      conversation_id: 'conv-queued',
+      message: 'Do this instead',
+      provider_id: 'provider-1',
+    })
+    expect(await screen.findByText('Updated answer')).toBeInTheDocument()
+  })
+
   it('renders streamed tool activity inline between assistant text segments', async () => {
     const user = userEvent.setup()
     let resolveStream: ((value: any) => void) | null = null
@@ -411,6 +777,247 @@ describe('LLMChat page', () => {
             tool: 'list_nodes',
             arguments: { cluster_name: 'Local' },
             result: { nodes: [{ name: 'pve' }] },
+          },
+        ],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 5,
+          total_tokens: 15,
+        },
+      })
+      await Promise.resolve()
+    })
+  })
+
+  it('renders structured diff tool results inside the chat transcript', async () => {
+    mockApi.llm.conversations.get.mockResolvedValueOnce({
+      id: 'conv-structured',
+      title: 'Structured tool conversation',
+      provider_id: 'provider-1',
+      proxmox_enabled: false,
+      proxmox_cluster_id: undefined,
+      kubernetes_enabled: false,
+      kubernetes_cluster_id: undefined,
+      compaction_count: 0,
+      compacted_at: undefined,
+      context_window: 128000,
+      context_token_count: 1024,
+      last_prompt_tokens: 10,
+      last_completion_tokens: 5,
+      last_total_tokens: 15,
+      last_message_at: '2026-04-08T10:05:00Z',
+      created_at: '2026-04-08T10:00:00Z',
+      updated_at: '2026-04-08T10:05:00Z',
+      messages: [
+        {
+          id: 'msg-structured',
+          role: 'assistant',
+          content: '',
+          created_at: '2026-04-08T10:05:00Z',
+          tool_calls: [
+            {
+              id: 'tool-diff',
+              type: 'function',
+              function: {
+                name: 'edit_file',
+                arguments: '{"path":"internal/llm/tools.go"}',
+              },
+            },
+          ],
+          tool_results: [
+            {
+              tool: 'edit_file',
+              arguments: { path: 'internal/llm/tools.go' },
+              result: {
+                path: 'internal/llm/tools.go',
+                operation: 'updated',
+              },
+              display: {
+                kind: 'diff',
+                title: 'internal/llm/tools.go',
+                path: 'internal/llm/tools.go',
+                summary: 'Updated (+2 -2)',
+                diff: '--- internal/llm/tools.go\n+++ internal/llm/tools.go\n@@ -1,3 +1,3 @@\n-func oldValue() string {\n-  return \"old\"\n+func newValue() string {\n+  return \"new\"\n }',
+                stats: {
+                  additions: 2,
+                  deletions: 2,
+                },
+              },
+            },
+          ],
+        },
+      ],
+    })
+
+    const user = userEvent.setup()
+    renderChat('/chat/conv-structured')
+
+    expect(await screen.findByText('internal/llm/tools.go')).toBeInTheDocument()
+    expect(screen.getByText('Updated (+2 -2)')).toBeInTheDocument()
+    expect(screen.getAllByText('Diff').length).toBeGreaterThan(0)
+
+    await user.click(screen.getByText('internal/llm/tools.go'))
+
+    const deletedLine = await screen.findByText((_, element) => element?.textContent === '-func oldValue() string {')
+    const addedLine = screen.getByText((_, element) => element?.textContent === '+func newValue() string {')
+    expect(document.querySelector('.chat-diff-block')).toBeTruthy()
+    expect(screen.getByText('@@ -1,3 +1,3 @@').className).toContain('chat-diff-line--hunk')
+    expect(deletedLine.className).toContain('chat-diff-line--deletion')
+    expect(addedLine.className).toContain('chat-diff-line--addition')
+    expect(document.querySelector('.chat-diff-code .hljs-keyword')).toBeTruthy()
+    expect(document.querySelector('.chat-diff-code .hljs-string')).toBeTruthy()
+  })
+
+  it('renders read_file previews with syntax highlighting and a line-number gutter', async () => {
+    mockApi.llm.conversations.get.mockResolvedValueOnce({
+      id: 'conv-read',
+      title: 'Read tool conversation',
+      provider_id: 'provider-1',
+      proxmox_enabled: false,
+      proxmox_cluster_id: undefined,
+      kubernetes_enabled: false,
+      kubernetes_cluster_id: undefined,
+      compaction_count: 0,
+      compacted_at: undefined,
+      context_window: 128000,
+      context_token_count: 1024,
+      last_prompt_tokens: 10,
+      last_completion_tokens: 5,
+      last_total_tokens: 15,
+      last_message_at: '2026-04-08T10:05:00Z',
+      created_at: '2026-04-08T10:00:00Z',
+      updated_at: '2026-04-08T10:05:00Z',
+      messages: [
+        {
+          id: 'msg-read',
+          role: 'assistant',
+          content: '',
+          created_at: '2026-04-08T10:05:00Z',
+          tool_calls: [
+            {
+              id: 'tool-read',
+              type: 'function',
+              function: {
+                name: 'read_file',
+                arguments: '{"path":"test/main.go"}',
+              },
+            },
+          ],
+          tool_results: [
+            {
+              tool: 'read_file',
+              arguments: { path: 'test/main.go' },
+              result: {
+                path: 'test/main.go',
+              },
+              display: {
+                kind: 'read',
+                title: 'test/main.go',
+                path: 'test/main.go',
+                summary: 'Lines 1-5 of 5',
+                preview: '1: package main\n2: \n3: import (\n4: \t"fmt"\n5: )',
+                stats: {
+                  start_line: 1,
+                  end_line: 5,
+                  total_lines: 5,
+                },
+              },
+            },
+          ],
+        },
+      ],
+    })
+
+    const user = userEvent.setup()
+    renderChat('/chat/conv-read')
+
+    expect(await screen.findByText('test/main.go')).toBeInTheDocument()
+    expect(screen.getByText('Lines 1-5 of 5')).toBeInTheDocument()
+
+    await user.click(screen.getByText('test/main.go'))
+
+    expect(document.querySelector('.chat-code-block')).toBeTruthy()
+    const firstLine = await screen.findByText((_, element) => element?.textContent === '1package main')
+    expect(firstLine.className).toContain('chat-code-line')
+    expect(document.querySelector('.chat-code-gutter')?.textContent).toBe('1')
+    expect(document.querySelector('.chat-code-content .hljs-keyword')).toBeTruthy()
+    expect(document.querySelector('.chat-code-content .hljs-string')).toBeTruthy()
+  })
+
+  it('shows failed tools with a red outline in the chat transcript', async () => {
+    const user = userEvent.setup()
+    let resolveStream: ((value: any) => void) | null = null
+
+    mockApi.llm.chatStream.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStream = resolve
+        }),
+    )
+
+    renderChat('/chat')
+
+    const composer = await screen.findByPlaceholderText(/Message Emerald/i)
+    await waitFor(() => expect(composer).toBeEnabled())
+    await user.type(composer, 'Read a file{enter}')
+
+    const toolCall = {
+      id: 'tool-failed',
+      type: 'function',
+      function: {
+        name: 'read_file',
+        arguments: '{"path":"missing.txt"}',
+      },
+    }
+
+    const streamHandler = mockApi.llm.chatStream.mock.calls[0][1]?.onEvent
+    await act(async () => {
+      streamHandler?.({ type: 'tool_started', tool_call: toolCall })
+      streamHandler?.({
+        type: 'tool_finished',
+        tool_call: toolCall,
+        tool_result: {
+          tool: 'read_file',
+          arguments: { path: 'missing.txt' },
+          error: 'missing.txt was not found',
+        },
+      })
+    })
+
+    const toolLabel = await screen.findByText('read_file')
+    const toolContainer = toolLabel.closest('details')
+    expect(toolContainer).toBeTruthy()
+    expect(toolContainer?.className).toContain('border-red-500/45')
+
+    await act(async () => {
+      resolveStream?.({
+        conversation_id: 'conv-1',
+        conversation: {
+          id: 'conv-1',
+          title: 'Existing conversation',
+          provider_id: 'provider-1',
+          proxmox_enabled: true,
+          proxmox_cluster_id: 'cluster-1',
+          kubernetes_enabled: false,
+          kubernetes_cluster_id: undefined,
+          compaction_count: 0,
+          compacted_at: undefined,
+          context_window: 128000,
+          context_token_count: 1100,
+          last_prompt_tokens: 10,
+          last_completion_tokens: 5,
+          last_total_tokens: 15,
+          last_message_at: '2026-04-08T10:06:00Z',
+          created_at: '2026-04-08T10:00:00Z',
+          updated_at: '2026-04-08T10:06:00Z',
+        },
+        content: 'The file was missing.',
+        tool_calls: [toolCall],
+        tool_results: [
+          {
+            tool: 'read_file',
+            arguments: { path: 'missing.txt' },
+            error: 'missing.txt was not found',
           },
         ],
         usage: {

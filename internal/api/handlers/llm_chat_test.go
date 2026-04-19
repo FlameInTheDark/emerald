@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/FlameInTheDark/emerald/internal/llm"
@@ -86,7 +87,7 @@ func TestRunToolChatContinuesAfterToolExecution(t *testing.T) {
 	resp, toolCalls, toolResults, transcript, err := runToolChat(context.Background(), provider, "test-model", []llm.Message{
 		{Role: "system", Content: "You are helpful."},
 		{Role: "user", Content: "List nodes"},
-	}, tools, "")
+	}, tools, "", llm.DefaultContextWindow)
 	if err != nil {
 		t.Fatalf("runToolChat returned error: %v", err)
 	}
@@ -154,7 +155,7 @@ func TestRunToolChatReturnsToolErrorsForFollowUp(t *testing.T) {
 	resp, _, toolResults, transcript, err := runToolChat(context.Background(), provider, "test-model", []llm.Message{
 		{Role: "system", Content: "You are helpful."},
 		{Role: "user", Content: "List nodes"},
-	}, tools, "")
+	}, tools, "", llm.DefaultContextWindow)
 	if err != nil {
 		t.Fatalf("runToolChat returned error: %v", err)
 	}
@@ -170,5 +171,64 @@ func TestRunToolChatReturnsToolErrorsForFollowUp(t *testing.T) {
 	}
 	if provider.requests[1].Messages[3].ToolCallID == "" {
 		t.Fatal("expected synthesized tool call id for tool message")
+	}
+}
+
+func TestRunToolChatPreservesStructuredToolDisplayMetadata(t *testing.T) {
+	provider := &mockChatProvider{
+		responses: []*llm.ChatResponse{
+			{
+				ToolCalls: []llm.ToolCall{
+					{
+						ID:   "call-1",
+						Type: "function",
+						Function: llm.ToolFunction{
+							Name:      "read_file",
+							Arguments: `{"path":"notes.txt","offset":1,"limit":2}`,
+						},
+					},
+				},
+			},
+			{
+				Content: "I read the file.",
+			},
+		},
+	}
+
+	tools := &mockToolExecutor{
+		executeFn: func(_ context.Context, _ string, _ json.RawMessage) (any, error) {
+			return llm.ToolExecutionResult{
+				Result: map[string]any{"path": "notes.txt", "content": "1: one\n2: two"},
+				Display: &llm.ToolResultDisplay{
+					Kind:    llm.ToolResultDisplayRead,
+					Title:   "notes.txt",
+					Path:    "notes.txt",
+					Summary: "Lines 1-2 of 3",
+					Preview: "1: one\n2: two",
+				},
+			}, nil
+		},
+	}
+
+	_, _, toolResults, _, err := runToolChat(context.Background(), provider, "test-model", []llm.Message{
+		{Role: "system", Content: "You are helpful."},
+		{Role: "user", Content: "Read the file"},
+	}, tools, "", llm.DefaultContextWindow)
+	if err != nil {
+		t.Fatalf("runToolChat returned error: %v", err)
+	}
+
+	if len(toolResults) != 1 || toolResults[0].Display == nil {
+		t.Fatalf("expected tool display metadata, got %+v", toolResults)
+	}
+	if toolResults[0].Display.Kind != llm.ToolResultDisplayRead {
+		t.Fatalf("unexpected display kind: %+v", toolResults[0].Display)
+	}
+
+	if len(provider.requests) != 2 {
+		t.Fatalf("expected 2 chat requests, got %d", len(provider.requests))
+	}
+	if !strings.Contains(provider.requests[1].Messages[3].Content, `"display"`) {
+		t.Fatalf("expected structured display in tool replay message, got %q", provider.requests[1].Messages[3].Content)
 	}
 }

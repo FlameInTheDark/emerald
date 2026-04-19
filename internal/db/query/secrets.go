@@ -75,6 +75,33 @@ func (s *SecretStore) GetByID(ctx context.Context, id string) (*models.Secret, e
 	return &secret, nil
 }
 
+func (s *SecretStore) GetValueByName(ctx context.Context, name string) (string, bool, error) {
+	query, args, err := psql.Select("value").
+		From("secrets").
+		Where(sq.Eq{"name": strings.TrimSpace(name)}).
+		Limit(1).
+		ToSql()
+	if err != nil {
+		return "", false, fmt.Errorf("build query: %w", err)
+	}
+
+	var encryptedValue string
+	err = s.db.QueryRowContext(ctx, query, args...).Scan(&encryptedValue)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("query secret value: %w", err)
+	}
+
+	decryptedValue, err := s.decrypt(encryptedValue)
+	if err != nil {
+		return "", false, fmt.Errorf("decrypt secret value: %w", err)
+	}
+
+	return decryptedValue, true, nil
+}
+
 func (s *SecretStore) Create(ctx context.Context, secret *models.Secret) error {
 	if secret == nil {
 		return fmt.Errorf("secret is required")

@@ -18,6 +18,7 @@ require (
 	github.com/hashicorp/go-plugin v1.7.0
 	github.com/kohkimakimoto/gluatemplate v0.0.0-20160815033744-d9e2c9d6b00f
 	github.com/mattn/go-sqlite3 v1.14.41
+	github.com/pmezard/go-difflib v1.0.0
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/urfave/cli/v3 v3.8.0

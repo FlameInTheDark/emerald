@@ -18,6 +18,7 @@ import (
 	"github.com/FlameInTheDark/emerald/internal/pipeline"
 	"github.com/FlameInTheDark/emerald/internal/shellcmd"
 	"github.com/FlameInTheDark/emerald/internal/skills"
+	"github.com/FlameInTheDark/emerald/internal/webtools"
 )
 
 const authSessionLocalKey = "auth_session"
@@ -34,6 +35,7 @@ type LLMChatHandler struct {
 	skillStore        skills.Reader
 	shellRunner       shellcmd.Runner
 	assistantProfiles *assistants.Store
+	webTools          *webtools.Store
 }
 
 type llmChatRequest struct {
@@ -123,6 +125,7 @@ func NewLLMChatHandler(
 	skillStore skills.Reader,
 	shellRunner shellcmd.Runner,
 	assistantProfiles *assistants.Store,
+	webTools *webtools.Store,
 ) *LLMChatHandler {
 	return &LLMChatHandler{
 		providerStore:     providerStore,
@@ -135,6 +138,7 @@ func NewLLMChatHandler(
 		skillStore:        skillStore,
 		shellRunner:       shellRunner,
 		assistantProfiles: assistantProfiles,
+		webTools:          webTools,
 	}
 }
 
@@ -293,6 +297,7 @@ func (h *LLMChatHandler) Chat(c *fiber.Ctx) error {
 		modelMessages,
 		prepared.toolRegistry,
 		derefString(prepared.conversation.ReasoningEffort),
+		prepared.contextWindow,
 	)
 	if err != nil {
 		status := llmErrorStatus(err)
@@ -398,7 +403,7 @@ func (h *LLMChatHandler) systemPrompt(
 		}
 	}
 	if len(integrationStatements) == 0 {
-		systemPrompt += " No infrastructure integration is enabled for this chat, so only local, pipeline, and skill tools are available."
+		systemPrompt += " No infrastructure integration is enabled for this chat, so only local workspace, pipeline, and skill tools are available."
 	} else {
 		systemPrompt += " " + strings.Join(integrationStatements, " ")
 	}
@@ -409,7 +414,14 @@ func (h *LLMChatHandler) systemPrompt(
 		}
 	}
 	if h.shellRunner != nil {
-		systemPrompt += " A run_shell_command tool is available when you need to inspect or operate in the local workspace."
+		systemPrompt += " A run_shell_command tool is available as an advanced fallback when structured workspace tools are not enough."
+	}
+	if workspaceRoot, err := shellcmd.ResolveWorkspaceRoot(h.shellRunner); err == nil && strings.TrimSpace(workspaceRoot) != "" {
+		systemPrompt += " Structured workspace coding tools are available for the local project: list_directory, glob_files, grep_files, read_file, edit_file, and write_file."
+		systemPrompt += " Prefer those tools for exploring and editing files because they keep paths inside the workspace and return compact previews or diffs in chat."
+	}
+	if h.webTools != nil {
+		systemPrompt += " Web search and page-reading tools may be available when configured. Use search_web to discover pages and open_web_page to inspect a specific URL."
 	}
 	return systemPrompt
 }

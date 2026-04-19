@@ -25,8 +25,8 @@ import NodeConfigPanel from '../components/flow/NodeConfigPanel'
 import ExecutionLog from '../components/flow/ExecutionLog'
 import NodeExecutionModal from '../components/flow/NodeExecutionModal'
 import EditorAssistantDock from '../components/flow/EditorAssistantDock'
-import AutomatorNode from '../components/flow/nodes/AutomatorNode'
-import AutomatorEdge from '../components/flow/edges/AutomatorEdge'
+import EmeraldNode from '../components/flow/nodes/EmeraldNode'
+import EmeraldEdge from '../components/flow/edges/EmeraldEdge'
 import { DEFAULT_NODE_BORDER_COLOR, getNodeBorderTint } from '../components/flow/nodeAppearance'
 import { api } from '../api/client'
 import { useUIStore } from '../store/ui'
@@ -47,11 +47,11 @@ import LucideIcon from '../components/ui/LucideIcon'
 import type { NodeMenuGroup } from '../components/flow/nodeTypes'
 
 const nodeTypes = {
-  emerald: AutomatorNode,
+  emerald: EmeraldNode,
 }
 
 const edgeTypes = {
-  emerald: AutomatorEdge,
+  emerald: EmeraldEdge,
 }
 
 const defaultEdgeOptions = {

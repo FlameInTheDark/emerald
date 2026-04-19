@@ -19,6 +19,6 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 COPY --from=builder /app/emerald .
 EXPOSE 8080
-ENV AUTOMATOR_PORT=8080
-ENV AUTOMATOR_DB_PATH=/data/emerald.db
+ENV EMERALD_PORT=8080
+ENV EMERALD_DB_PATH=/data/emerald.db
 CMD ["./emerald"]

@@ -20,6 +20,7 @@ import (
 	"github.com/FlameInTheDark/emerald/internal/db/query"
 	"github.com/FlameInTheDark/emerald/internal/llm"
 	"github.com/FlameInTheDark/emerald/internal/skills"
+	"github.com/FlameInTheDark/emerald/internal/webtools"
 )
 
 func TestLLMChatHandlerCreatesConversationAndReusesHistory(t *testing.T) {
@@ -510,12 +511,16 @@ func TestLLMChatHandlerStreamIncludesRateLimitStatusInErrorEvent(t *testing.T) {
 		t.Fatalf("expected at least one event, got body %q", string(body))
 	}
 
-	first := events[0]
-	if eventType, _ := first["type"].(string); eventType != "error" {
-		t.Fatalf("event type = %v, want error", first["type"])
+	if eventType, _ := events[0]["type"].(string); eventType != "turn_started" {
+		t.Fatalf("first event type = %v, want turn_started", events[0]["type"])
 	}
-	if status, ok := first["status"].(float64); !ok || int(status) != fiber.StatusTooManyRequests {
-		t.Fatalf("error status = %v, want %d", first["status"], fiber.StatusTooManyRequests)
+
+	errorEvent := findSSEEventByType(events, "error")
+	if errorEvent == nil {
+		t.Fatalf("expected error event, got %+v", events)
+	}
+	if status, ok := errorEvent["status"].(float64); !ok || int(status) != fiber.StatusTooManyRequests {
+		t.Fatalf("error status = %v, want %d", errorEvent["status"], fiber.StatusTooManyRequests)
 	}
 }
 
@@ -561,14 +566,17 @@ func TestLLMChatHandlerStreamsAssistantDeltasAndPersistsConversation(t *testing.
 	}
 
 	events := decodeSSEPayloads(t, string(body))
-	if len(events) < 3 {
-		t.Fatalf("event count = %d, want at least 3 (%s)", len(events), string(body))
+	if len(events) < 4 {
+		t.Fatalf("event count = %d, want at least 4 (%s)", len(events), string(body))
 	}
 
-	if eventType, _ := events[0]["type"].(string); eventType != "assistant_delta" {
-		t.Fatalf("first event type = %v, want assistant_delta", events[0]["type"])
+	if eventType, _ := events[0]["type"].(string); eventType != "turn_started" {
+		t.Fatalf("first event type = %v, want turn_started", events[0]["type"])
 	}
-	if delta, _ := events[0]["delta"].(string); delta != "Hello" {
+	if eventType, _ := events[1]["type"].(string); eventType != "assistant_delta" {
+		t.Fatalf("second event type = %v, want assistant_delta", events[1]["type"])
+	}
+	if delta, _ := events[1]["delta"].(string); delta != "Hello" {
 		t.Fatalf("first delta = %q, want %q", delta, "Hello")
 	}
 
@@ -607,6 +615,72 @@ func TestLLMChatHandlerStreamsAssistantDeltasAndPersistsConversation(t *testing.
 	}
 }
 
+func TestLLMChatHandlerPersistsPartialStreamProgressOnError(t *testing.T) {
+	t.Parallel()
+
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n")
+		_, _ = io.WriteString(w, "data: {invalid json}\n\n")
+	}))
+	defer providerServer.Close()
+
+	handler, _ := newLLMChatHandlerTestDeps(t, providerServer.URL)
+	app := newLLMChatTestApp(handler, auth.Session{UserID: "user-1", Username: "user-one"})
+
+	res := performJSONRequest(t, app, http.MethodPost, "/llm/chat/stream", map[string]any{
+		"message":     "Persist progress",
+		"provider_id": "provider-1",
+		"integrations": map[string]any{
+			"proxmox":    map[string]any{"enabled": false},
+			"kubernetes": map[string]any{"enabled": false},
+		},
+	})
+	if res.StatusCode != fiber.StatusOK {
+		t.Fatalf("stream status = %d, want %d", res.StatusCode, fiber.StatusOK)
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read stream body: %v", err)
+	}
+
+	events := decodeSSEPayloads(t, string(body))
+	if findSSEEventByType(events, "turn_started") == nil {
+		t.Fatalf("expected turn_started event, got %+v", events)
+	}
+	if findSSEEventByType(events, "error") == nil {
+		t.Fatalf("expected error event, got %+v", events)
+	}
+
+	started := findSSEEventByType(events, "turn_started")
+	turnPayload, ok := started["turn"].(map[string]any)
+	if !ok {
+		t.Fatalf("turn_started missing turn payload: %+v", started)
+	}
+	conversationID, _ := turnPayload["conversation_id"].(string)
+	if strings.TrimSpace(conversationID) == "" {
+		t.Fatalf("expected conversation id in turn_started payload: %+v", turnPayload)
+	}
+
+	detailRes := performJSONRequest(t, app, http.MethodGet, "/llm/conversations/"+conversationID, nil)
+	if detailRes.StatusCode != fiber.StatusOK {
+		t.Fatalf("conversation detail status = %d, want %d", detailRes.StatusCode, fiber.StatusOK)
+	}
+
+	var detail conversationResponse
+	if err := json.NewDecoder(detailRes.Body).Decode(&detail); err != nil {
+		t.Fatalf("decode conversation detail: %v", err)
+	}
+	if len(detail.Messages) != 2 {
+		t.Fatalf("conversation message count = %d, want 2", len(detail.Messages))
+	}
+	if detail.Messages[1].Content != "Partial" {
+		t.Fatalf("assistant message content = %q, want %q", detail.Messages[1].Content, "Partial")
+	}
+}
+
 func TestLLMChatHandlerSystemPromptIncludesWorkspaceSkills(t *testing.T) {
 	t.Parallel()
 
@@ -638,6 +712,9 @@ func TestLLMChatHandlerSystemPromptIncludesWorkspaceSkills(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "get_skill") {
 		t.Fatalf("expected get_skill guidance in prompt, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "list_directory") || !strings.Contains(prompt, "edit_file") {
+		t.Fatalf("expected workspace coding tool guidance in prompt, got %q", prompt)
 	}
 }
 
@@ -682,9 +759,11 @@ func newLLMChatHandlerTestDepsWithConfig(t *testing.T, providerURL string, provi
 	kubernetesStore := query.NewKubernetesClusterStore(database.DB, nil)
 	pipelineStore := query.NewPipelineStore(database.DB)
 	chatStore := query.NewChatStore(database.DB)
-	assistantProfileStore := assistants.NewStore(query.NewAppConfigStore(database.DB))
+	appConfigStore := query.NewAppConfigStore(database.DB)
+	assistantProfileStore := assistants.NewStore(appConfigStore)
+	webToolsStore := webtools.NewStore(appConfigStore, nil)
 
-	return NewLLMChatHandler(providerStore, clusterStore, kubernetesStore, pipelineStore, chatStore, nil, nil, nil, nil, assistantProfileStore), chatStore
+	return NewLLMChatHandler(providerStore, clusterStore, kubernetesStore, pipelineStore, chatStore, nil, nil, nil, nil, assistantProfileStore, webToolsStore), chatStore
 }
 
 func newLLMChatTestApp(handler *LLMChatHandler, session auth.Session) *fiber.App {
@@ -756,6 +835,15 @@ func decodeSSEPayloads(t *testing.T, body string) []map[string]any {
 	}
 
 	return events
+}
+
+func findSSEEventByType(events []map[string]any, eventType string) map[string]any {
+	for _, event := range events {
+		if value, _ := event["type"].(string); value == eventType {
+			return event
+		}
+	}
+	return nil
 }
 
 type chatSkillReaderStub struct {

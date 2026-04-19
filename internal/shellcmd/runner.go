@@ -44,6 +44,10 @@ func NewRunner(baseDir string) *ExecRunner {
 	return &ExecRunner{baseDir: baseDir}
 }
 
+func (r *ExecRunner) WorkspaceRoot() (string, error) {
+	return r.resolveWorkingDirectory("")
+}
+
 func (r *ExecRunner) Run(ctx context.Context, req Request) (*Result, error) {
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
@@ -128,6 +132,23 @@ func (r *ExecRunner) resolveWorkingDirectory(raw string) (string, error) {
 	}
 
 	return filepath.Clean(filepath.Join(base, raw)), nil
+}
+
+type workspaceRootProvider interface {
+	WorkspaceRoot() (string, error)
+}
+
+// ResolveWorkspaceRoot returns the workspace directory shared by local tooling.
+func ResolveWorkspaceRoot(runner Runner) (string, error) {
+	if provider, ok := runner.(workspaceRootProvider); ok {
+		return provider.WorkspaceRoot()
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	return filepath.Clean(cwd), nil
 }
 
 func shellExecutable() string {

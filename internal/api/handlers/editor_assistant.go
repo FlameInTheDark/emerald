@@ -115,6 +115,7 @@ func (h *EditorAssistantHandler) ChatStream(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("failed to initialize provider: %v", err)})
 	}
+	contextWindow := llm.ResolveContextWindowWithDiscovery(c.Context(), providerConfig)
 
 	modelMessages, err := h.buildModelMessages(profile, mode, req.Messages, req.Message, snapshot, req.Selection, req.AttachedLog)
 	if err != nil {
@@ -141,6 +142,7 @@ func (h *EditorAssistantHandler) ChatStream(c *fiber.Ctx) error {
 			modelMessages,
 			toolExecutor,
 			"",
+			contextWindow,
 			func(event llm.ToolChatEvent) error {
 				switch event.Type {
 				case llm.ToolChatEventContentDelta:

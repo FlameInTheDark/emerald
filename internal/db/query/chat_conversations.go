@@ -158,6 +158,17 @@ func (s *ChatStore) CreateConversation(ctx context.Context, conversation *models
 		return fmt.Errorf("conversation is required")
 	}
 
+	now := time.Now().UTC()
+	if conversation.CreatedAt.IsZero() {
+		conversation.CreatedAt = now
+	}
+	if conversation.UpdatedAt.IsZero() {
+		conversation.UpdatedAt = now
+	}
+	if conversation.LastMessageAt.IsZero() {
+		conversation.LastMessageAt = now
+	}
+
 	conversation.ID = uuid.New().String()
 	query, args, err := psql.
 		Insert("chat_conversations").
@@ -201,7 +212,7 @@ func (s *ChatStore) CreateConversation(ctx context.Context, conversation *models
 			conversation.LastPromptTokens,
 			conversation.LastCompletionTokens,
 			conversation.LastTotalTokens,
-			sq.Expr("CURRENT_TIMESTAMP"),
+			conversation.LastMessageAt,
 		).
 		ToSql()
 	if err != nil {
@@ -218,6 +229,14 @@ func (s *ChatStore) CreateConversation(ctx context.Context, conversation *models
 func (s *ChatStore) UpdateConversationSettings(ctx context.Context, conversation *models.ChatConversation) error {
 	if conversation == nil {
 		return fmt.Errorf("conversation is required")
+	}
+
+	now := time.Now().UTC()
+	if conversation.UpdatedAt.IsZero() {
+		conversation.UpdatedAt = now
+	}
+	if conversation.LastMessageAt.IsZero() {
+		conversation.LastMessageAt = conversation.UpdatedAt
 	}
 
 	query, args, err := psql.
@@ -237,7 +256,8 @@ func (s *ChatStore) UpdateConversationSettings(ctx context.Context, conversation
 		Set("last_prompt_tokens", conversation.LastPromptTokens).
 		Set("last_completion_tokens", conversation.LastCompletionTokens).
 		Set("last_total_tokens", conversation.LastTotalTokens).
-		Set("updated_at", sq.Expr("CURRENT_TIMESTAMP")).
+		Set("last_message_at", conversation.LastMessageAt).
+		Set("updated_at", conversation.UpdatedAt).
 		Where(sq.Eq{
 			"id":      strings.TrimSpace(conversation.ID),
 			"user_id": strings.TrimSpace(conversation.UserID),
@@ -305,6 +325,15 @@ func (s *ChatStore) AppendTurn(
 		return fmt.Errorf("chat turn messages are required")
 	}
 
+	now := time.Now().UTC()
+	if createConversation {
+		if conversation.CreatedAt.IsZero() {
+			conversation.CreatedAt = now
+		}
+	}
+	conversation.UpdatedAt = now
+	conversation.LastMessageAt = now
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -359,7 +388,7 @@ func (s *ChatStore) AppendTurn(
 				conversation.LastPromptTokens,
 				conversation.LastCompletionTokens,
 				conversation.LastTotalTokens,
-				sq.Expr("CURRENT_TIMESTAMP"),
+				conversation.LastMessageAt,
 			).
 			ToSql()
 		if buildErr != nil {
@@ -374,6 +403,12 @@ func (s *ChatStore) AppendTurn(
 
 	userMessage.ConversationID = conversation.ID
 	assistantMessage.ConversationID = conversation.ID
+	if userMessage.CreatedAt.IsZero() {
+		userMessage.CreatedAt = now
+	}
+	if assistantMessage.CreatedAt.IsZero() {
+		assistantMessage.CreatedAt = now
+	}
 
 	if err = insertChatMessage(ctx, tx, userMessage); err != nil {
 		return err
@@ -399,8 +434,8 @@ func (s *ChatStore) AppendTurn(
 		Set("last_prompt_tokens", conversation.LastPromptTokens).
 		Set("last_completion_tokens", conversation.LastCompletionTokens).
 		Set("last_total_tokens", conversation.LastTotalTokens).
-		Set("last_message_at", sq.Expr("CURRENT_TIMESTAMP")).
-		Set("updated_at", sq.Expr("CURRENT_TIMESTAMP")).
+		Set("last_message_at", conversation.LastMessageAt).
+		Set("updated_at", conversation.UpdatedAt).
 		Where(sq.Eq{
 			"id":      strings.TrimSpace(conversation.ID),
 			"user_id": strings.TrimSpace(conversation.UserID),
@@ -433,8 +468,61 @@ func (s *ChatStore) AppendTurn(
 	return nil
 }
 
+func (s *ChatStore) UpdateTurn(
+	ctx context.Context,
+	conversation *models.ChatConversation,
+	assistantMessage *models.ChatMessage,
+) error {
+	if conversation == nil {
+		return fmt.Errorf("conversation is required")
+	}
+	if assistantMessage == nil {
+		return fmt.Errorf("assistant message is required")
+	}
+	if strings.TrimSpace(assistantMessage.ID) == "" {
+		return fmt.Errorf("assistant message id is required")
+	}
+
+	now := time.Now().UTC()
+	conversation.UpdatedAt = now
+	conversation.LastMessageAt = now
+
+	query, args, err := psql.
+		Update("chat_messages").
+		Set("content", assistantMessage.Content).
+		Set("tool_calls", assistantMessage.ToolCalls).
+		Set("tool_results", assistantMessage.ToolResults).
+		Set("usage", assistantMessage.Usage).
+		Set("context_messages", assistantMessage.ContextMessages).
+		Where(sq.Eq{
+			"id":              strings.TrimSpace(assistantMessage.ID),
+			"conversation_id": strings.TrimSpace(conversation.ID),
+		}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("build query: %w", err)
+	}
+
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update chat message: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check updated rows: %w", err)
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return s.UpdateConversationSettings(ctx, conversation)
+}
+
 func insertChatMessage(ctx context.Context, exec sqlExecutor, message *models.ChatMessage) error {
 	message.ID = uuid.New().String()
+	if message.CreatedAt.IsZero() {
+		message.CreatedAt = time.Now().UTC()
+	}
 
 	query, args, err := psql.
 		Insert("chat_messages").

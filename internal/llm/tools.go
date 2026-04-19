@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/FlameInTheDark/emerald/internal/db/models"
+	"github.com/FlameInTheDark/emerald/internal/filetools"
 	ik8s "github.com/FlameInTheDark/emerald/internal/kubernetes"
 	"github.com/FlameInTheDark/emerald/internal/proxmox"
 	"github.com/FlameInTheDark/emerald/internal/shellcmd"
 	"github.com/FlameInTheDark/emerald/internal/skills"
+	"github.com/FlameInTheDark/emerald/internal/webtools"
 )
 
 type ToolHandler func(ctx context.Context, args json.RawMessage) (any, error)
@@ -64,6 +66,8 @@ type ToolRegistryOptions struct {
 	EnableKubernetes           bool
 	SkillStore                 skills.Reader
 	ShellRunner                shellcmd.Runner
+	WorkspaceRoot              string
+	WebToolsConfig             *webtools.RuntimeConfig
 }
 
 type ToolRegistry struct {
@@ -80,6 +84,9 @@ type ToolRegistry struct {
 	enableKubernetes           bool
 	skillStore                 skills.Reader
 	shellRunner                shellcmd.Runner
+	fileTools                  *filetools.Service
+	webToolsConfig             *webtools.RuntimeConfig
+	webToolsClient             *webtools.Client
 }
 
 type proxmoxToolArgs struct {
@@ -109,6 +116,21 @@ func NewToolRegistry(
 }
 
 func NewToolRegistryWithOptions(opts ToolRegistryOptions) *ToolRegistry {
+	workspaceRoot := strings.TrimSpace(opts.WorkspaceRoot)
+	if workspaceRoot == "" {
+		resolvedRoot, err := shellcmd.ResolveWorkspaceRoot(opts.ShellRunner)
+		if err == nil {
+			workspaceRoot = resolvedRoot
+		}
+	}
+
+	var workspaceTools *filetools.Service
+	if workspaceRoot != "" {
+		if service, err := filetools.New(workspaceRoot); err == nil {
+			workspaceTools = service
+		}
+	}
+
 	r := &ToolRegistry{
 		tools:                      make(map[string]ToolDefinition),
 		handlers:                   make(map[string]ToolHandler),
@@ -123,6 +145,9 @@ func NewToolRegistryWithOptions(opts ToolRegistryOptions) *ToolRegistry {
 		enableKubernetes:           opts.EnableKubernetes,
 		skillStore:                 opts.SkillStore,
 		shellRunner:                opts.ShellRunner,
+		fileTools:                  workspaceTools,
+		webToolsConfig:             opts.WebToolsConfig,
+		webToolsClient:             webtools.NewClient(nil),
 	}
 
 	if r.enableProxmox {
@@ -133,7 +158,9 @@ func NewToolRegistryWithOptions(opts ToolRegistryOptions) *ToolRegistry {
 	}
 	r.registerPipelineTools()
 	r.registerSkillTools()
+	r.registerFileTools()
 	r.registerShellTools()
+	r.registerWebTools()
 	return r
 }
 

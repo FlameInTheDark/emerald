@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { BaseEdge, getBezierPath, type EdgeProps } from '@xyflow/react'
 
-type AutomatorEdgeData = {
+type EmeraldEdgeData = {
   useGradient?: boolean
   gradientStartColor?: string
   gradientEndColor?: string
@@ -11,7 +11,7 @@ function sanitizeId(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, '-')
 }
 
-function AutomatorEdge({
+function EmeraldEdge({
   id,
   sourceX,
   sourceY,
@@ -34,7 +34,7 @@ function AutomatorEdge({
     targetPosition,
   })
 
-  const edgeData = (data as AutomatorEdgeData | undefined) ?? {}
+  const edgeData = (data as EmeraldEdgeData | undefined) ?? {}
   const useGradient = Boolean(
     edgeData.useGradient
       && edgeData.gradientStartColor
@@ -73,4 +73,4 @@ function AutomatorEdge({
   )
 }
 
-export default memo(AutomatorEdge)
+export default memo(EmeraldEdge)

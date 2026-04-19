@@ -23,7 +23,7 @@ You need:
 
 Emerald discovers plugins from:
 
-1. `AUTOMATOR_PLUGINS_DIR`, if set
+1. `EMERALD_PLUGINS_DIR`, if set
 2. the nearest `.agents/plugins`
 3. a fallback `.agents/plugins` under the current working directory
 

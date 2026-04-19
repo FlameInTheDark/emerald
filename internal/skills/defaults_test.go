@@ -3,6 +3,8 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -25,6 +27,15 @@ func TestEnsureBundledDefaultsWritesMissingSkills(t *testing.T) {
 	if !strings.Contains(string(content), "The current node input is exposed as a global named `input`.") &&
 		!strings.Contains(string(content), "The current node input is exposed as a global named input.") {
 		t.Fatalf("seeded lua skill missing input guidance:\n%s", string(content))
+	}
+
+	pluginCreatorPath := filepath.Join(skillsDir, "plugin-creator", "SKILL.md")
+	pluginCreatorContent, err := os.ReadFile(pluginCreatorPath)
+	if err != nil {
+		t.Fatalf("read seeded plugin-creator skill: %v", err)
+	}
+	if !strings.Contains(string(pluginCreatorContent), "pkg/pluginapi") {
+		t.Fatalf("seeded plugin-creator skill missing plugin SDK guidance:\n%s", string(pluginCreatorContent))
 	}
 }
 
@@ -52,4 +63,65 @@ func TestEnsureBundledDefaultsDoesNotOverwriteExistingSkills(t *testing.T) {
 	if string(content) != "custom content" {
 		t.Fatalf("expected existing skill to be preserved, got %q", string(content))
 	}
+}
+
+func TestBundledDefaultsMatchRepositorySkills(t *testing.T) {
+	t.Parallel()
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test file path")
+	}
+
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	canonicalRoot := filepath.Join(repoRoot, ".agents", "skills")
+	bundledRoot := filepath.Join(repoRoot, "internal", "skills", "defaults", "skills")
+
+	canonicalFiles := listSkillFiles(t, canonicalRoot)
+	bundledFiles := listSkillFiles(t, bundledRoot)
+
+	if !slices.Equal(canonicalFiles, bundledFiles) {
+		t.Fatalf("bundled skill file set does not match repo skills:\ncanonical=%v\nbundled=%v", canonicalFiles, bundledFiles)
+	}
+
+	for _, relPath := range canonicalFiles {
+		canonicalContent, err := os.ReadFile(filepath.Join(canonicalRoot, relPath))
+		if err != nil {
+			t.Fatalf("read canonical skill %s: %v", relPath, err)
+		}
+		bundledContent, err := os.ReadFile(filepath.Join(bundledRoot, relPath))
+		if err != nil {
+			t.Fatalf("read bundled skill %s: %v", relPath, err)
+		}
+		if string(canonicalContent) != string(bundledContent) {
+			t.Fatalf("bundled skill %s is out of sync with .agents/skills", relPath)
+		}
+	}
+}
+
+func listSkillFiles(t *testing.T, root string) []string {
+	t.Helper()
+
+	entries := make([]string, 0)
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() || !strings.EqualFold(d.Name(), "SKILL.md") {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, relPath)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk skills under %s: %v", root, err)
+	}
+
+	slices.Sort(entries)
+	return entries
 }

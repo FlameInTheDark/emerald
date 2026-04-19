@@ -159,17 +159,17 @@ func TestTemplateHandlerImportBundleReturnsPartialSuccess(t *testing.T) {
 
 	body := bytes.NewBufferString(`{
 		"version":"v1",
-		"kind":"automator-template-bundle",
+		"kind":"emerald-template-bundle",
 		"templates":[
 			{
 				"version":"v1",
-				"kind":"automator-template",
+				"kind":"emerald-template",
 				"name":"Healthy",
 				"definition":{"nodes":[{"id":"trigger-1","data":{"type":"trigger:manual"}}],"edges":[]}
 			},
 			{
 				"version":"v1",
-				"kind":"automator-template",
+				"kind":"emerald-template",
 				"name":"Invalid",
 				"definition":{"nodes":[{"id":"return-1","data":{"type":"logic:return"}},{"id":"return-2","data":{"type":"logic:return"}}],"edges":[]}
 			}

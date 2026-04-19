@@ -42,7 +42,7 @@ github.com/FlameInTheDark/emerald/pkg/pluginsdk
 
 Emerald resolves the plugin root directory in this order:
 
-1. `AUTOMATOR_PLUGINS_DIR`, when set
+1. `EMERALD_PLUGINS_DIR`, when set
 2. The nearest parent directory that contains `.agents/plugins`
 3. A fallback `.agents/plugins` under the current working directory
 

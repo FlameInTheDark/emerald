@@ -85,6 +85,21 @@ export interface LLMProvider {
   updated_at: string
 }
 
+export type WebSearchProvider = 'disabled' | 'searxng' | 'jina'
+export type WebPageObservationMode = 'http' | 'jina'
+
+export interface WebToolsConfig {
+  search_provider: WebSearchProvider
+  page_observation_mode: WebPageObservationMode
+  searxng_base_url: string
+  jina_search_base_url: string
+  jina_reader_base_url: string
+  jina_api_key_secret_name?: string
+  search_ready: boolean
+  page_read_ready: boolean
+  warnings: string[]
+}
+
 export interface Pipeline {
   id: string
   name: string
@@ -105,7 +120,7 @@ export interface FlowDefinitionDocument {
 
 export interface PipelineDocument {
   version: string
-  kind: 'emerald-pipeline' | 'automator-pipeline'
+  kind: 'emerald-pipeline'
   name: string
   description?: string | null
   status?: Pipeline['status'] | string
@@ -126,7 +141,7 @@ export interface TemplateDetail extends TemplateSummary {
 
 export interface TemplateDocument {
   version: string
-  kind: 'emerald-template' | 'automator-template'
+  kind: 'emerald-template'
   name: string
   description?: string | null
   definition: FlowDefinitionDocument
@@ -134,7 +149,7 @@ export interface TemplateDocument {
 
 export interface TemplateBundle {
   version: string
-  kind: 'emerald-template-bundle' | 'automator-template-bundle'
+  kind: 'emerald-template-bundle'
   templates: TemplateDocument[]
 }
 
@@ -249,11 +264,25 @@ export interface LLMToolCall {
   function: LLMToolFunction
 }
 
+export type LLMToolDisplayKind = 'generic' | 'list_directory' | 'glob' | 'grep' | 'read' | 'diff'
+
+export interface LLMToolResultDisplay {
+  kind: LLMToolDisplayKind
+  title?: string
+  path?: string
+  summary?: string
+  preview?: string
+  diff?: string
+  truncated?: boolean
+  stats?: Record<string, unknown>
+}
+
 export interface LLMToolResult {
   tool: string
   arguments?: unknown
   result?: unknown
   error?: string
+  display?: LLMToolResultDisplay
 }
 
 export type LLMReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
@@ -393,6 +422,18 @@ export interface LLMChatStreamAssistantReasoningDeltaEvent {
   delta: string
 }
 
+export interface LLMChatStreamTurnStartedPayload {
+  conversation_id: string
+  conversation: LLMConversationSummary
+  user_message: LLMConversationMessage
+  assistant_message: LLMConversationMessage
+}
+
+export interface LLMChatStreamTurnStartedEvent {
+  type: 'turn_started'
+  turn: LLMChatStreamTurnStartedPayload
+}
+
 export interface LLMChatStreamToolStartedEvent {
   type: 'tool_started'
   tool_call?: LLMToolCall
@@ -421,6 +462,7 @@ export interface LLMChatStreamErrorEvent {
 }
 
 export type LLMChatStreamEvent =
+  | LLMChatStreamTurnStartedEvent
   | LLMChatStreamAssistantDeltaEvent
   | LLMChatStreamAssistantReasoningDeltaEvent
   | LLMChatStreamToolStartedEvent

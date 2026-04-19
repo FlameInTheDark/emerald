@@ -16,9 +16,6 @@ const (
 	KindPipeline       = "emerald-pipeline"
 	KindTemplate       = "emerald-template"
 	KindTemplateBundle = "emerald-template-bundle"
-	legacyKindPipeline = "automator-pipeline"
-	legacyKindTemplate = "automator-template"
-	legacyKindBundle   = "automator-template-bundle"
 	DefaultCategory    = "custom"
 )
 
@@ -316,8 +313,6 @@ func (s *Service) Import(ctx context.Context, raw []byte) (*ImportResult, error)
 
 	switch envelope.Kind {
 	case KindTemplate:
-		fallthrough
-	case legacyKindTemplate:
 		document, err := parseTemplateDocument(raw)
 		if err != nil {
 			return nil, err
@@ -344,8 +339,6 @@ func (s *Service) Import(ctx context.Context, raw []byte) (*ImportResult, error)
 			FailedCount:  0,
 		}, nil
 	case KindPipeline:
-		fallthrough
-	case legacyKindPipeline:
 		document, err := parsePipelineDocument(raw)
 		if err != nil {
 			return nil, err
@@ -372,8 +365,6 @@ func (s *Service) Import(ctx context.Context, raw []byte) (*ImportResult, error)
 			FailedCount:  0,
 		}, nil
 	case KindTemplateBundle:
-		fallthrough
-	case legacyKindBundle:
 		document, err := parseTemplateBundle(raw)
 		if err != nil {
 			return nil, err
@@ -494,7 +485,7 @@ func parseTemplateDocument(raw []byte) (*TemplateDocument, error) {
 	if err := json.Unmarshal(raw, &document); err != nil {
 		return nil, fmt.Errorf("parse template document: %w", err)
 	}
-	if !matchesDocumentKind(document.Kind, KindTemplate, legacyKindTemplate) {
+	if !matchesDocumentKind(document.Kind, KindTemplate) {
 		return nil, fmt.Errorf("expected kind %q, got %q", KindTemplate, document.Kind)
 	}
 	if document.Version != DocumentVersion {
@@ -515,7 +506,7 @@ func parsePipelineDocument(raw []byte) (*PipelineDocument, error) {
 	if err := json.Unmarshal(raw, &document); err != nil {
 		return nil, fmt.Errorf("parse pipeline document: %w", err)
 	}
-	if !matchesDocumentKind(document.Kind, KindPipeline, legacyKindPipeline) {
+	if !matchesDocumentKind(document.Kind, KindPipeline) {
 		return nil, fmt.Errorf("expected kind %q, got %q", KindPipeline, document.Kind)
 	}
 	if document.Version != DocumentVersion {
@@ -536,7 +527,7 @@ func parseTemplateBundle(raw []byte) (*TemplateBundle, error) {
 	if err := json.Unmarshal(raw, &bundle); err != nil {
 		return nil, fmt.Errorf("parse template bundle: %w", err)
 	}
-	if !matchesDocumentKind(bundle.Kind, KindTemplateBundle, legacyKindBundle) {
+	if !matchesDocumentKind(bundle.Kind, KindTemplateBundle) {
 		return nil, fmt.Errorf("expected kind %q, got %q", KindTemplateBundle, bundle.Kind)
 	}
 	if bundle.Version != DocumentVersion {
@@ -552,9 +543,9 @@ func parseTemplateBundle(raw []byte) (*TemplateBundle, error) {
 	return &bundle, nil
 }
 
-func matchesDocumentKind(actual string, expected string, legacy string) bool {
+func matchesDocumentKind(actual string, expected string) bool {
 	actual = strings.TrimSpace(actual)
-	return actual == expected || actual == legacy
+	return actual == expected
 }
 
 func canonicalizeDefinition(input Definition) (storedDefinition, error) {

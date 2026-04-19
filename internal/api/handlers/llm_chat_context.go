@@ -217,6 +217,13 @@ func buildModelHistory(messages []models.ChatMessage, compactedMessageCount int)
 }
 
 func buildStoredMessageReplay(message models.ChatMessage) ([]llm.Message, error) {
+	if strings.TrimSpace(message.Role) == "assistant" &&
+		strings.TrimSpace(message.Content) == "" &&
+		(message.ToolCalls == nil || strings.TrimSpace(*message.ToolCalls) == "") &&
+		(message.ContextMessages == nil || strings.TrimSpace(*message.ContextMessages) == "") {
+		return nil, nil
+	}
+
 	if message.ContextMessages != nil && strings.TrimSpace(*message.ContextMessages) != "" {
 		var replayMessages []llm.Message
 		if err := json.Unmarshal([]byte(*message.ContextMessages), &replayMessages); err != nil {

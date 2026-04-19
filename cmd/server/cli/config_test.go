@@ -14,9 +14,9 @@ func TestConfigGetCommandRedactsSensitiveValuesByDefault(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	t.Setenv("AUTOMATOR_DB_PATH", filepath.Join(tempDir, "emerald.db"))
-	t.Setenv("AUTOMATOR_SKILLS_DIR", filepath.Join(tempDir, "skills"))
-	t.Setenv("AUTOMATOR_PLUGINS_DIR", filepath.Join(tempDir, "plugins"))
+	t.Setenv("EMERALD_DB_PATH", filepath.Join(tempDir, "emerald.db"))
+	t.Setenv("EMERALD_SKILLS_DIR", filepath.Join(tempDir, "skills"))
+	t.Setenv("EMERALD_PLUGINS_DIR", filepath.Join(tempDir, "plugins"))
 
 	runtime, err := newCLIRuntime(ctx, cliRuntimeOptions{migrate: true})
 	if err != nil {
@@ -68,9 +68,9 @@ func TestConfigUpdateCommandPreservesSensitiveValuesWhenOmitted(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	t.Setenv("AUTOMATOR_DB_PATH", filepath.Join(tempDir, "emerald.db"))
-	t.Setenv("AUTOMATOR_SKILLS_DIR", filepath.Join(tempDir, "skills"))
-	t.Setenv("AUTOMATOR_PLUGINS_DIR", filepath.Join(tempDir, "plugins"))
+	t.Setenv("EMERALD_DB_PATH", filepath.Join(tempDir, "emerald.db"))
+	t.Setenv("EMERALD_SKILLS_DIR", filepath.Join(tempDir, "skills"))
+	t.Setenv("EMERALD_PLUGINS_DIR", filepath.Join(tempDir, "plugins"))
 
 	runtime, err := newCLIRuntime(ctx, cliRuntimeOptions{migrate: true})
 	if err != nil {

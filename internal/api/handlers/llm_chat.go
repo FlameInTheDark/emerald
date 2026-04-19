@@ -15,8 +15,13 @@ func runToolChat(
 	messages []llm.Message,
 	tools llm.ToolExecutor,
 	reasoningEffort string,
+	contextWindow int,
 ) (*llm.ChatResponse, []llm.ToolCall, []llm.ToolResult, []llm.Message, error) {
-	return llm.RunToolChat(ctx, provider, model, messages, tools, reasoningEffort, maxToolChatRounds)
+	return llm.RunToolChat(ctx, provider, model, messages, tools, llm.ToolChatOptions{
+		ReasoningEffort: reasoningEffort,
+		MaxRounds:       maxToolChatRounds,
+		ContextWindow:   contextWindow,
+	})
 }
 
 func runToolChatStream(
@@ -26,7 +31,12 @@ func runToolChatStream(
 	messages []llm.Message,
 	tools llm.ToolExecutor,
 	reasoningEffort string,
+	contextWindow int,
 	handler llm.ToolChatEventHandler,
 ) (*llm.ChatResponse, []llm.ToolCall, []llm.ToolResult, []llm.Message, error) {
-	return llm.RunToolChatStream(ctx, provider, model, messages, tools, reasoningEffort, maxToolChatRounds, handler)
+	return llm.RunToolChatStream(ctx, provider, model, messages, tools, llm.ToolChatOptions{
+		ReasoningEffort: reasoningEffort,
+		MaxRounds:       maxToolChatRounds,
+		ContextWindow:   contextWindow,
+	}, handler)
 }

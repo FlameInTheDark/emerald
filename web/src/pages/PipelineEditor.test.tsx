@@ -259,11 +259,11 @@ vi.mock('../components/flow/NodeExecutionModal', () => ({
   default: () => null,
 }))
 
-vi.mock('../components/flow/nodes/AutomatorNode', () => ({
+vi.mock('../components/flow/nodes/EmeraldNode', () => ({
   default: () => null,
 }))
 
-vi.mock('../components/flow/edges/AutomatorEdge', () => ({
+vi.mock('../components/flow/edges/EmeraldEdge', () => ({
   default: () => null,
 }))
 
