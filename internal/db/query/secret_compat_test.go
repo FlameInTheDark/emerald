@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/FlameInTheDark/emerald/internal/crypto"
@@ -163,9 +164,9 @@ func newCompatTestDB(t *testing.T) (*db.DB, *crypto.Encryptor) {
 	}
 
 	appConfigStore := NewAppConfigStore(database.DB)
-	key, err := appConfigStore.EnsureEncryptionKey(context.Background(), "")
-	if err != nil {
-		t.Fatalf("EnsureEncryptionKey: %v", err)
+	key := strings.Repeat("k", 32)
+	if err := appConfigStore.Set(context.Background(), AppConfigKeyEncryptionKey, key); err != nil {
+		t.Fatalf("Set encryption key: %v", err)
 	}
 
 	encryptor, err := crypto.NewEncryptor(key)

@@ -2,13 +2,10 @@ package query
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"strings"
 
-	"github.com/FlameInTheDark/emerald/internal/crypto"
 	"github.com/FlameInTheDark/emerald/internal/db/models"
 	sq "github.com/Masterminds/squirrel"
 )
@@ -58,39 +55,13 @@ func (s *AppConfigStore) Set(ctx context.Context, key string, value string) erro
 	return err
 }
 
-func (s *AppConfigStore) EnsureEncryptionKey(ctx context.Context, seed string) (string, error) {
+func (s *AppConfigStore) GetEncryptionKey(ctx context.Context) (string, bool, error) {
 	existing, err := s.Get(ctx, AppConfigKeyEncryptionKey)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	if existing != nil && strings.TrimSpace(existing.Value) != "" {
-		return existing.Value, nil
+	if existing == nil || strings.TrimSpace(existing.Value) == "" {
+		return "", false, nil
 	}
-
-	key := strings.TrimSpace(seed)
-	if key != "" {
-		if _, err := crypto.NewEncryptor(key); err != nil {
-			return "", fmt.Errorf("validate encryption key seed: %w", err)
-		}
-	} else {
-		key, err = generateEncryptionKey()
-		if err != nil {
-			return "", err
-		}
-	}
-
-	if err := s.Set(ctx, AppConfigKeyEncryptionKey, key); err != nil {
-		return "", fmt.Errorf("store encryption key: %w", err)
-	}
-
-	return key, nil
-}
-
-func generateEncryptionKey() (string, error) {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("generate encryption key: %w", err)
-	}
-
-	return hex.EncodeToString(buf), nil
+	return strings.TrimSpace(existing.Value), true, nil
 }

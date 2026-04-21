@@ -51,7 +51,7 @@ func (s *ChannelStore) Create(ctx context.Context, channel *models.Channel) erro
 
 func (s *ChannelStore) GetByID(ctx context.Context, id string) (*models.Channel, error) {
 	query, args, err := psql.Select(
-		"id", "name", "type", "config", "welcome_message", "connect_url", "enabled", "state", "created_at", "updated_at",
+		"id", "name", "type", "config", "(CASE WHEN config IS NOT NULL AND config != '' THEN 1 ELSE 0 END) AS has_secret", "welcome_message", "connect_url", "enabled", "state", "created_at", "updated_at",
 	).
 		From("channels").
 		Where(sq.Eq{"id": id}).
@@ -66,6 +66,7 @@ func (s *ChannelStore) GetByID(ctx context.Context, id string) (*models.Channel,
 		&channel.Name,
 		&channel.Type,
 		&channel.Config,
+		&channel.HasSecret,
 		&channel.WelcomeMessage,
 		&channel.ConnectURL,
 		&channel.Enabled,
@@ -86,7 +87,7 @@ func (s *ChannelStore) GetByID(ctx context.Context, id string) (*models.Channel,
 
 func (s *ChannelStore) List(ctx context.Context) ([]models.Channel, error) {
 	query, args, err := psql.Select(
-		"id", "name", "type", "welcome_message", "connect_url", "enabled", "created_at", "updated_at",
+		"id", "name", "type", "(CASE WHEN config IS NOT NULL AND config != '' THEN 1 ELSE 0 END) AS has_secret", "welcome_message", "connect_url", "enabled", "created_at", "updated_at",
 	).
 		From("channels").
 		OrderBy("created_at DESC").
@@ -110,6 +111,7 @@ func (s *ChannelStore) List(ctx context.Context) ([]models.Channel, error) {
 			&channel.ID,
 			&channel.Name,
 			&channel.Type,
+			&channel.HasSecret,
 			&channel.WelcomeMessage,
 			&channel.ConnectURL,
 			&channel.Enabled,
@@ -126,7 +128,7 @@ func (s *ChannelStore) List(ctx context.Context) ([]models.Channel, error) {
 
 func (s *ChannelStore) ListEnabled(ctx context.Context) ([]models.Channel, error) {
 	query, args, err := psql.Select(
-		"id", "name", "type", "config", "welcome_message", "connect_url", "enabled", "state", "created_at", "updated_at",
+		"id", "name", "type", "config", "(CASE WHEN config IS NOT NULL AND config != '' THEN 1 ELSE 0 END) AS has_secret", "welcome_message", "connect_url", "enabled", "state", "created_at", "updated_at",
 	).
 		From("channels").
 		Where(sq.Eq{"enabled": 1}).
@@ -152,6 +154,7 @@ func (s *ChannelStore) ListEnabled(ctx context.Context) ([]models.Channel, error
 			&channel.Name,
 			&channel.Type,
 			&channel.Config,
+			&channel.HasSecret,
 			&channel.WelcomeMessage,
 			&channel.ConnectURL,
 			&channel.Enabled,

@@ -5,6 +5,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/FlameInTheDark/emerald/internal/auth"
 	"github.com/FlameInTheDark/emerald/internal/db/models"
 	"github.com/FlameInTheDark/emerald/internal/db/query"
 	ik8s "github.com/FlameInTheDark/emerald/internal/kubernetes"
@@ -24,6 +25,7 @@ type kubernetesClusterResponse struct {
 	Name             string                 `json:"name"`
 	SourceType       string                 `json:"source_type"`
 	Kubeconfig       string                 `json:"kubeconfig,omitempty"`
+	HasSecret        bool                   `json:"has_secret"`
 	ContextName      string                 `json:"context_name"`
 	DefaultNamespace string                 `json:"default_namespace"`
 	Server           string                 `json:"server"`
@@ -34,12 +36,24 @@ type kubernetesClusterResponse struct {
 
 // KubernetesClusterHandler manages Kubernetes cluster settings.
 type KubernetesClusterHandler struct {
-	store *query.KubernetesClusterStore
+	store         *query.KubernetesClusterStore
+	authService   *auth.Service
+	auditLogStore *query.AuditLogStore
 }
 
 // NewKubernetesClusterHandler creates a handler for Kubernetes clusters.
-func NewKubernetesClusterHandler(store *query.KubernetesClusterStore) *KubernetesClusterHandler {
-	return &KubernetesClusterHandler{store: store}
+func NewKubernetesClusterHandler(store *query.KubernetesClusterStore, opts ...KubernetesClusterHandlerOptions) *KubernetesClusterHandler {
+	handler := &KubernetesClusterHandler{store: store}
+	if len(opts) > 0 {
+		handler.authService = opts[0].AuthService
+		handler.auditLogStore = opts[0].AuditLogStore
+	}
+	return handler
+}
+
+type KubernetesClusterHandlerOptions struct {
+	AuthService   *auth.Service
+	AuditLogStore *query.AuditLogStore
 }
 
 // List returns normalized Kubernetes clusters without kubeconfig payloads.
@@ -104,22 +118,31 @@ func (h *KubernetesClusterHandler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(h.responseFor(cluster, true))
+	created, err := h.store.GetByID(c.Context(), cluster.ID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(h.responseFor(created, false))
 }
 
-// Get returns a single Kubernetes cluster including the normalized kubeconfig.
+// Get returns a single Kubernetes cluster without secret material.
 func (h *KubernetesClusterHandler) Get(c *fiber.Ctx) error {
 	cluster, err := h.store.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "kubernetes cluster not found"})
 	}
 
-	return c.JSON(h.responseFor(cluster, true))
+	return c.JSON(h.responseFor(cluster, false))
 }
 
 // Update validates and replaces a Kubernetes cluster.
 func (h *KubernetesClusterHandler) Update(c *fiber.Ctx) error {
 	id := c.Params("id")
+	existing, err := h.store.GetByID(c.Context(), id)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "kubernetes cluster not found"})
+	}
 
 	var req kubernetesClusterRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -129,13 +152,25 @@ func (h *KubernetesClusterHandler) Update(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name is required"})
 	}
 
+	kubeconfig := req.Kubeconfig
+	manual := req.Manual
+	if !bodyIncludesJSONField(c, "kubeconfig") && !bodyIncludesJSONField(c, "manual") {
+		kubeconfig = existing.Kubeconfig
+		if existing.SourceType == ik8s.SourceTypeManual && existing.Kubeconfig != "" {
+			recovered, _, recoverErr := ik8s.RecoverManualConfig(existing.Kubeconfig, existing.ContextName)
+			if recoverErr == nil {
+				manual = recovered
+			}
+		}
+	}
+
 	normalized, err := ik8s.NormalizeClusterInput(ik8s.ClusterInput{
 		Name:             req.Name,
 		SourceType:       req.SourceType,
-		Kubeconfig:       req.Kubeconfig,
+		Kubeconfig:       kubeconfig,
 		ContextName:      req.ContextName,
 		DefaultNamespace: req.DefaultNamespace,
-		Manual:           req.Manual,
+		Manual:           manual,
 	})
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -154,7 +189,12 @@ func (h *KubernetesClusterHandler) Update(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	return c.JSON(h.responseFor(cluster, true))
+	refreshed, err := h.store.GetByID(c.Context(), id)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(h.responseFor(refreshed, false))
 }
 
 // Delete removes a Kubernetes cluster definition.
@@ -188,11 +228,30 @@ func (h *KubernetesClusterHandler) Test(c *fiber.Ctx) error {
 	return c.JSON(result)
 }
 
+func (h *KubernetesClusterHandler) Reveal(c *fiber.Ctx) error {
+	session, err := requireRevealAuthorization(c, h.authService)
+	if err != nil {
+		return c.Status(statusCodeForRevealError(err)).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	cluster, err := h.store.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "kubernetes cluster not found"})
+	}
+
+	if err := writeAuditLog(c, h.auditLogStore, session, "kubernetes_cluster.reveal", "kubernetes_cluster", cluster.ID, map[string]any{"name": cluster.Name}); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to write audit log"})
+	}
+
+	return c.JSON(h.responseFor(cluster, true))
+}
+
 func (h *KubernetesClusterHandler) responseFor(cluster *models.KubernetesCluster, includeSecrets bool) kubernetesClusterResponse {
 	response := kubernetesClusterResponse{
 		ID:               cluster.ID,
 		Name:             cluster.Name,
 		SourceType:       cluster.SourceType,
+		HasSecret:        cluster.HasSecret || strings.TrimSpace(cluster.Kubeconfig) != "",
 		ContextName:      cluster.ContextName,
 		DefaultNamespace: cluster.DefaultNamespace,
 		Server:           cluster.Server,

@@ -14,10 +14,19 @@ import (
 type UserHandler struct {
 	store       *query.UserStore
 	authService *auth.Service
+	trustProxy  bool
 }
 
-func NewUserHandler(store *query.UserStore, authService *auth.Service) *UserHandler {
-	return &UserHandler{store: store, authService: authService}
+type UserHandlerOptions struct {
+	TrustProxy bool
+}
+
+func NewUserHandler(store *query.UserStore, authService *auth.Service, opts ...UserHandlerOptions) *UserHandler {
+	handler := &UserHandler{store: store, authService: authService}
+	if len(opts) > 0 {
+		handler.trustProxy = opts[0].TrustProxy
+	}
+	return handler
 }
 
 func (h *UserHandler) List(c *fiber.Ctx) error {
@@ -34,6 +43,14 @@ func (h *UserHandler) List(c *fiber.Ctx) error {
 }
 
 func (h *UserHandler) Create(c *fiber.Ctx) error {
+	session, ok := h.currentSession(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
+	}
+	if !session.IsSuperAdmin {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "only the super-admin can create users"})
+	}
+
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -68,10 +85,26 @@ func (h *UserHandler) Create(c *fiber.Ctx) error {
 }
 
 func (h *UserHandler) Delete(c *fiber.Ctx) error {
-	if h.authService != nil {
-		if session, ok := h.authService.Session(c.Cookies(h.authService.CookieName())); ok && session.UserID == c.Params("id") {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "you cannot delete your own account"})
-		}
+	session, ok := h.currentSession(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
+	}
+	if !session.IsSuperAdmin {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "only the super-admin can delete users"})
+	}
+	if session.UserID == c.Params("id") {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "you cannot delete your own account"})
+	}
+
+	target, err := h.store.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if target == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
+	}
+	if target.IsSuperAdmin {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "the bootstrap super-admin cannot be removed"})
 	}
 
 	if err := h.store.Delete(c.Context(), c.Params("id")); err != nil {
@@ -108,7 +141,7 @@ func (h *UserHandler) ChangePassword(c *fiber.Ctx) error {
 	sessionToken := c.Cookies(h.authService.CookieName())
 	session, ok := h.authService.Session(sessionToken)
 	if !ok {
-		clearAuthCookie(c, h.authService.CookieName())
+		clearAuthCookie(c, h.authService.CookieName(), h.trustProxy)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
 	}
 
@@ -131,6 +164,16 @@ func (h *UserHandler) ChangePassword(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to refresh session"})
 	}
 
-	setAuthCookie(c, h.authService.CookieName(), newToken, newSession.ExpiresAt)
+	setAuthCookie(c, h.authService.CookieName(), newToken, newSession.ExpiresAt, h.trustProxy)
 	return c.JSON(toAuthSessionResponse(newSession))
+}
+
+func (h *UserHandler) currentSession(c *fiber.Ctx) (auth.Session, bool) {
+	if session, ok := c.Locals("auth_session").(auth.Session); ok {
+		return session, true
+	}
+	if h.authService == nil {
+		return auth.Session{}, false
+	}
+	return h.authService.Session(c.Cookies(h.authService.CookieName()))
 }

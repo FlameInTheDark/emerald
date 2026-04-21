@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import PipelineEditor from './PipelineEditor'
@@ -592,6 +592,32 @@ describe('PipelineEditor', () => {
 
     await waitFor(() => expect(mockApi.pipelines.run).toHaveBeenCalledTimes(1))
   })
+
+  it('does not leak a queued run onto another pipeline after navigation', async () => {
+    const user = userEvent.setup()
+    const pipelinesById: Record<string, Pipeline> = {
+      'pipeline-1': createPipelineWithID('pipeline-1', 'Start Alpha'),
+      'pipeline-2': createPipelineWithID('pipeline-2', 'Start Beta'),
+    }
+
+    mockApi.pipelines.get.mockImplementation(async (requestedId: string) => structuredClone(pipelinesById[requestedId]))
+
+    renderEditorWithNavigation()
+
+    expect(await screen.findByRole('button', { name: 'Node Start Alpha' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Run' }))
+    expect(await screen.findByTestId('execution-log')).toBeInTheDocument()
+    expect(mockApi.pipelines.run).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Go pipeline 2' }))
+    expect(await screen.findByRole('button', { name: 'Node Start Beta' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Log' }))
+    await user.click(screen.getByRole('button', { name: 'Execution log ready' }))
+
+    expect(mockApi.pipelines.run).not.toHaveBeenCalled()
+  })
 })
 
 function renderEditor() {
@@ -613,6 +639,43 @@ function renderEditor() {
         <Routes>
           <Route path="/pipelines/:id" element={<PipelineEditor />} />
         </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+function renderEditorWithNavigation() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        gcTime: Infinity,
+      },
+      mutations: {
+        retry: false,
+      },
+    },
+  })
+
+  function EditorHarness() {
+    const navigate = useNavigate()
+
+    return (
+      <>
+        <button type="button" onClick={() => navigate('/pipelines/pipeline-2')}>
+          Go pipeline 2
+        </button>
+        <Routes>
+          <Route path="/pipelines/:id" element={<PipelineEditor />} />
+        </Routes>
+      </>
+    )
+  }
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/pipelines/pipeline-1']}>
+        <EditorHarness />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -653,8 +716,12 @@ async function emitRuntimeMeasurementForNewestNode() {
 }
 
 function createPipeline(label: string): Pipeline {
+  return createPipelineWithID('pipeline-1', label)
+}
+
+function createPipelineWithID(id: string, label: string): Pipeline {
   return {
-    id: 'pipeline-1',
+    id,
     name: 'Example pipeline',
     description: 'Testing pipeline editor',
     nodes: JSON.stringify([

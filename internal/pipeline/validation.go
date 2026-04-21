@@ -6,11 +6,15 @@ import (
 	"strings"
 
 	"github.com/FlameInTheDark/emerald/internal/node"
+	"github.com/FlameInTheDark/emerald/internal/node/trigger"
 	"github.com/FlameInTheDark/emerald/internal/nodeconfig"
 )
 
 func ValidateFlowData(flowData FlowData) error {
 	if err := validateReturnNodes(flowData); err != nil {
+		return err
+	}
+	if err := validateRootNodes(flowData); err != nil {
 		return err
 	}
 
@@ -32,6 +36,40 @@ func validateReturnNodes(flowData FlowData) error {
 
 	if count > 1 {
 		return fmt.Errorf("only one Return node is allowed per pipeline")
+	}
+
+	return nil
+}
+
+func validateRootNodes(flowData FlowData) error {
+	rootIDs, nodeMap := rootExecutableNodeIDs(flowData)
+	if len(rootIDs) == 0 {
+		return nil
+	}
+
+	manualTriggerRoots := 0
+	for _, nodeID := range rootIDs {
+		flowNode, ok := nodeMap[nodeID]
+		if !ok {
+			continue
+		}
+
+		nodeType, _ := decodeNodeTypeAndConfig(flowNode)
+		if !trigger.IsTriggerType(nodeType) {
+			return fmt.Errorf(
+				"root node %q (%s) must be a trigger node; connect executable nodes from a trigger instead",
+				nodeID,
+				nodeType,
+			)
+		}
+
+		if nodeType == node.TypeTriggerManual {
+			manualTriggerRoots++
+		}
+	}
+
+	if manualTriggerRoots > 1 {
+		return fmt.Errorf("only one manual trigger root is allowed per pipeline")
 	}
 
 	return nil

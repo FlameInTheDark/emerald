@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os/signal"
 	"syscall"
 	"time"
@@ -30,6 +31,9 @@ func RunServer(ctx context.Context, cmd *cli.Command) error {
 	if host := cmd.String("host"); host != "" {
 		runtime.Config.Server.Host = host
 	}
+	if err := runtime.Config.Validate(); err != nil {
+		return fmt.Errorf("validate config: %w", err)
+	}
 
 	if err := runtime.UserStore.EnsureDefaultUser(ctx, runtime.Config.Auth.Username, runtime.Config.Auth.Password); err != nil {
 		return fmt.Errorf("ensure default user: %w", err)
@@ -40,8 +44,9 @@ func RunServer(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	authService := auth.NewService(runtime.UserStore, auth.Config{
-		SessionTTL: runtime.Config.Auth.SessionTTL,
-		CookieName: runtime.Config.Auth.CookieName,
+		SessionTTL:   runtime.Config.Auth.SessionTTL,
+		CookieName:   runtime.Config.Auth.CookieName,
+		SessionStore: runtime.UserSessionStore,
 	})
 
 	app := api.New(api.Config{
@@ -57,14 +62,17 @@ func RunServer(ctx context.Context, cmd *cli.Command) error {
 		NodeDefinitions: runtime.NodeDefinitionService,
 		SecretStore:     runtime.SecretStore,
 		TriggerService:  runtime.TriggerService,
+		AuditLogStore:   runtime.AuditLogStore,
+		Security:        runtime.Config.Security,
 	})
 
 	serverErrCh := make(chan error, 1)
+	listenAddr := net.JoinHostPort(runtime.Config.Server.Host, runtime.Config.Server.Port)
 	go func() {
-		serverErrCh <- app.Listen(":" + runtime.Config.Server.Port)
+		serverErrCh <- app.Listen(listenAddr)
 	}()
 
-	log.Printf("server started on port %s", runtime.Config.Server.Port)
+	log.Printf("server started on %s", listenAddr)
 
 	signalCtx, stopSignals := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignals()

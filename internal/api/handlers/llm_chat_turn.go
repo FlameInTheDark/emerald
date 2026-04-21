@@ -121,6 +121,7 @@ func (h *LLMChatHandler) prepareChatTurn(
 		SkillStore:                 h.skillStore,
 		ShellRunner:                h.shellRunner,
 		WebToolsConfig:             webToolsConfig,
+		AuditLogger:                h.toolAuditLogger(session),
 	})
 
 	profile, err := h.assistantProfiles.Get(ctx, assistants.ScopeChatWindow)

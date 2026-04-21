@@ -41,12 +41,14 @@ type Config struct {
 
 type RuntimeConfig struct {
 	Config
-	JinaAPIKey string `json:"-"`
+	JinaAPIKey          string `json:"-"`
+	AllowPrivateNetwork bool   `json:"-"`
 }
 
 type Store struct {
-	configs *query.AppConfigStore
-	secrets *query.SecretStore
+	configs             *query.AppConfigStore
+	secrets             *query.SecretStore
+	allowPrivateNetwork bool
 }
 
 type storedConfig struct {
@@ -58,8 +60,12 @@ type storedConfig struct {
 	JinaAPIKeySecretName string              `json:"jina_api_key_secret_name,omitempty"`
 }
 
-func NewStore(configs *query.AppConfigStore, secrets *query.SecretStore) *Store {
-	return &Store{configs: configs, secrets: secrets}
+func NewStore(configs *query.AppConfigStore, secrets *query.SecretStore, allowPrivateNetwork ...bool) *Store {
+	store := &Store{configs: configs, secrets: secrets}
+	if len(allowPrivateNetwork) > 0 {
+		store.allowPrivateNetwork = allowPrivateNetwork[0]
+	}
+	return store
 }
 
 func DefaultConfig() Config {
@@ -140,6 +146,7 @@ func (s *Store) Resolve(ctx context.Context) (RuntimeConfig, error) {
 	}
 
 	runtime := RuntimeConfig{Config: cfg}
+	runtime.AllowPrivateNetwork = s.allowPrivateNetwork
 	if strings.TrimSpace(cfg.JinaAPIKeySecretName) == "" || s == nil || s.secrets == nil {
 		return runtime, nil
 	}

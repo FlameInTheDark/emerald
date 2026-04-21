@@ -45,7 +45,7 @@ func (s *LLMProviderStore) Create(ctx context.Context, p *models.LLMProvider) er
 }
 
 func (s *LLMProviderStore) GetByID(ctx context.Context, id string) (*models.LLMProvider, error) {
-	query, args, err := psql.Select("id", "name", "provider_type", "api_key", "base_url", "model", "config", "is_default", "created_at", "updated_at").
+	query, args, err := psql.Select("id", "name", "provider_type", "api_key", "(CASE WHEN api_key != '' THEN 1 ELSE 0 END) AS has_secret", "base_url", "model", "config", "is_default", "created_at", "updated_at").
 		From("llm_providers").
 		Where(sq.Eq{"id": id}).
 		ToSql()
@@ -55,7 +55,7 @@ func (s *LLMProviderStore) GetByID(ctx context.Context, id string) (*models.LLMP
 
 	var p models.LLMProvider
 	err = s.db.QueryRowContext(ctx, query, args...).Scan(
-		&p.ID, &p.Name, &p.ProviderType, &p.APIKey, &p.BaseURL, &p.Model, &p.Config, &p.IsDefault, &p.CreatedAt, &p.UpdatedAt,
+		&p.ID, &p.Name, &p.ProviderType, &p.APIKey, &p.HasSecret, &p.BaseURL, &p.Model, &p.Config, &p.IsDefault, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query llm provider: %w", err)
@@ -72,7 +72,7 @@ func (s *LLMProviderStore) GetByID(ctx context.Context, id string) (*models.LLMP
 }
 
 func (s *LLMProviderStore) List(ctx context.Context) ([]models.LLMProvider, error) {
-	query, args, err := psql.Select("id", "name", "provider_type", "base_url", "model", "is_default", "created_at", "updated_at").
+	query, args, err := psql.Select("id", "name", "provider_type", "(CASE WHEN api_key != '' THEN 1 ELSE 0 END) AS has_secret", "base_url", "model", "is_default", "created_at", "updated_at").
 		From("llm_providers").
 		OrderBy("created_at DESC").
 		ToSql()
@@ -91,7 +91,7 @@ func (s *LLMProviderStore) List(ctx context.Context) ([]models.LLMProvider, erro
 	var providers []models.LLMProvider
 	for rows.Next() {
 		var p models.LLMProvider
-		if err := rows.Scan(&p.ID, &p.Name, &p.ProviderType, &p.BaseURL, &p.Model, &p.IsDefault, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.ProviderType, &p.HasSecret, &p.BaseURL, &p.Model, &p.IsDefault, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan llm provider: %w", err)
 		}
 		providers = append(providers, p)

@@ -43,6 +43,7 @@ func TestClientSearchSearXNGParsesStructuredResults(t *testing.T) {
 			SearchProvider: SearchProviderSearXNG,
 			SearXNGBaseURL: server.URL,
 		},
+		AllowPrivateNetwork: true,
 	}, SearchRequest{
 		Query: "emerald automation",
 		Limit: 3,
@@ -82,7 +83,8 @@ func TestClientSearchJinaSendsAuthorizationHeader(t *testing.T) {
 			SearchProvider:    SearchProviderJina,
 			JinaSearchBaseURL: server.URL,
 		},
-		JinaAPIKey: "secret-token",
+		JinaAPIKey:          "secret-token",
+		AllowPrivateNetwork: true,
 	}, SearchRequest{
 		Query: "latest emerald",
 	})
@@ -109,6 +111,7 @@ func TestClientOpenPageWithHTTPExtractsReadableText(t *testing.T) {
 		Config: Config{
 			PageObservationMode: PageObservationModeHTTP,
 		},
+		AllowPrivateNetwork: true,
 	}, OpenPageRequest{
 		URL: server.URL,
 	})
@@ -141,7 +144,8 @@ func TestClientOpenPageWithJinaParsesMarkdownSection(t *testing.T) {
 			PageObservationMode: PageObservationModeJina,
 			JinaReaderBaseURL:   server.URL,
 		},
-		JinaAPIKey: "secret-token",
+		JinaAPIKey:          "secret-token",
+		AllowPrivateNetwork: true,
 	}, OpenPageRequest{
 		URL:  "https://example.com",
 		Mode: PageObservationModeJina,

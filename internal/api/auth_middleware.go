@@ -12,7 +12,7 @@ import (
 
 const authSessionLocalKey = "auth_session"
 
-func authMiddleware(service *auth.Service) fiber.Handler {
+func authMiddleware(service *auth.Service, trustProxy bool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if c.Method() == http.MethodOptions || isPublicAPIPath(c.Path()) {
 			return c.Next()
@@ -23,19 +23,19 @@ func authMiddleware(service *auth.Service) fiber.Handler {
 			return c.Next()
 		}
 
-		clearAuthCookie(c, service.CookieName())
+		clearAuthCookie(c, service.CookieName(), trustProxy)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
 	}
 }
 
-func websocketAuthMiddleware(service *auth.Service) fiber.Handler {
+func websocketAuthMiddleware(service *auth.Service, trustProxy bool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if session, ok := service.Session(c.Cookies(service.CookieName())); ok {
 			c.Locals(authSessionLocalKey, session)
 			return c.Next()
 		}
 
-		clearAuthCookie(c, service.CookieName())
+		clearAuthCookie(c, service.CookieName(), trustProxy)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
 	}
 }
@@ -53,14 +53,35 @@ func isPublicAPIPath(path string) bool {
 	}
 }
 
-func clearAuthCookie(c *fiber.Ctx, cookieName string) {
+func clearAuthCookie(c *fiber.Ctx, cookieName string, trustProxy bool) {
 	c.Cookie(&fiber.Cookie{
 		Name:     cookieName,
 		Value:    "",
 		Path:     "/",
 		HTTPOnly: true,
 		SameSite: "Lax",
+		Secure:   isSecureRequest(c, trustProxy),
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 	})
+}
+
+func isSecureRequest(c *fiber.Ctx, trustProxy bool) bool {
+	if strings.EqualFold(c.Protocol(), "https") {
+		return true
+	}
+	if !trustProxy {
+		return false
+	}
+
+	forwardedProto := strings.ToLower(strings.TrimSpace(c.Get("X-Forwarded-Proto")))
+	if forwardedProto == "" {
+		return false
+	}
+	for _, part := range strings.Split(forwardedProto, ",") {
+		if strings.TrimSpace(part) == "https" {
+			return true
+		}
+	}
+	return false
 }

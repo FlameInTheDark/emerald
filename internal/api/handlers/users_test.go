@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
@@ -61,8 +62,18 @@ func TestUserHandlerChangePassword(t *testing.T) {
 	if updatedUser == nil {
 		t.Fatal("expected updated user")
 	}
-	if updatedUser.Password != "new-secret" {
-		t.Fatalf("password = %q, want new-secret", updatedUser.Password)
+	if updatedUser.Password == "new-secret" {
+		t.Fatal("expected stored password to be hashed")
+	}
+	if !auth.IsPasswordHash(updatedUser.Password) {
+		t.Fatalf("password = %q, want argon2id hash", updatedUser.Password)
+	}
+	match, err := auth.VerifyPasswordHash(updatedUser.Password, "new-secret")
+	if err != nil {
+		t.Fatalf("VerifyPasswordHash: %v", err)
+	}
+	if !match {
+		t.Fatal("expected updated password hash to verify")
 	}
 
 	if _, _, err := authService.Login(context.Background(), "admin", "admin"); err == nil {
@@ -118,8 +129,12 @@ func TestUserHandlerChangePasswordRejectsWrongCurrentPassword(t *testing.T) {
 	if user == nil {
 		t.Fatal("expected user")
 	}
-	if user.Password != "admin" {
-		t.Fatalf("password = %q, want admin", user.Password)
+	match, err := auth.VerifyPasswordHash(user.Password, "admin")
+	if err != nil {
+		t.Fatalf("VerifyPasswordHash: %v", err)
+	}
+	if !match {
+		t.Fatal("expected original password hash to remain valid")
 	}
 }
 
@@ -142,11 +157,7 @@ func newUserHandlerTestDeps(t *testing.T) (*query.UserStore, *auth.Service) {
 		t.Fatalf("db.Migrate: %v", err)
 	}
 
-	appConfigStore := query.NewAppConfigStore(database.DB)
-	key, err := appConfigStore.EnsureEncryptionKey(context.Background(), "")
-	if err != nil {
-		t.Fatalf("EnsureEncryptionKey: %v", err)
-	}
+	key := strings.Repeat("k", 32)
 
 	encryptor, err := crypto.NewEncryptor(key)
 	if err != nil {

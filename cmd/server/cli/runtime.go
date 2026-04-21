@@ -67,12 +67,14 @@ type runtimeBundle struct {
 	PluginsDir    string
 
 	AppConfigStore         *query.AppConfigStore
+	AuditLogStore          *query.AuditLogStore
 	ClusterStore           *query.ClusterStore
 	KubernetesClusterStore *query.KubernetesClusterStore
 	LLMProviderStore       *query.LLMProviderStore
 	ChannelStore           *query.ChannelStore
 	ChannelContactStore    *query.ChannelContactStore
 	UserStore              *query.UserStore
+	UserSessionStore       *query.UserSessionStore
 	SecretStore            *query.SecretStore
 	PipelineStore          *query.PipelineStore
 	ExecutionStore         *query.ExecutionStore
@@ -169,7 +171,7 @@ func newCLIRuntime(ctx context.Context, opts cliRuntimeOptions) (*runtimeBundle,
 	}
 
 	appConfigStore := query.NewAppConfigStore(database.DB)
-	encryptionKey, err := appConfigStore.EnsureEncryptionKey(ctx, cfg.EncryptionKey)
+	encryptionKey, err := resolveEncryptionKey(ctx, appConfigStore, cfg.Security)
 	if err != nil {
 		return nil, fmt.Errorf("initialize encryption key: %w", err)
 	}
@@ -243,7 +245,7 @@ func newCLIRuntime(ctx context.Context, opts cliRuntimeOptions) (*runtimeBundle,
 	}
 	log.Printf("loading local plugins from %s", pluginsDir)
 
-	pluginManager := plugins.NewManager(pluginsDir)
+	pluginManager := plugins.NewManager(pluginsDir, cfg.Security.AllowPlugins)
 	if err := pluginManager.Refresh(ctx); err != nil {
 		log.Printf("failed to load plugins: %v", err)
 	}
@@ -257,19 +259,21 @@ func newCLIRuntime(ctx context.Context, opts cliRuntimeOptions) (*runtimeBundle,
 		SkillsDir:              skillsDir,
 		PluginsDir:             pluginsDir,
 		AppConfigStore:         appConfigStore,
+		AuditLogStore:          query.NewAuditLogStore(database.DB),
 		ClusterStore:           query.NewClusterStore(database.DB, encryptor),
 		KubernetesClusterStore: query.NewKubernetesClusterStore(database.DB, encryptor),
 		LLMProviderStore:       query.NewLLMProviderStore(database.DB, encryptor),
 		ChannelStore:           query.NewChannelStore(database.DB, encryptor),
 		ChannelContactStore:    query.NewChannelContactStore(database.DB),
 		UserStore:              query.NewUserStore(database.DB, encryptor),
+		UserSessionStore:       query.NewUserSessionStore(database.DB),
 		SecretStore:            query.NewSecretStore(database.DB, encryptor),
 		PipelineStore:          query.NewPipelineStore(database.DB),
 		ExecutionStore:         query.NewExecutionStore(database.DB),
 		PluginManager:          pluginManager,
 		NodeDefinitionService:  nodedefs.NewService(pluginManager),
 		SkillStore:             skills.NewResolvingStore(resolveManagedSkillsDir, 2*time.Second),
-		ShellRunner:            shellcmd.NewRunner(workingDir),
+		ShellRunner:            shellcmd.NewRunner(workingDir, cfg.Security.AllowAbsoluteToolPaths),
 		WSHub:                  ws.NewHub(),
 		dispatchController:     &channelDispatchController{},
 	}
@@ -478,4 +482,28 @@ func (r *runtimeBundle) Close() error {
 	})
 
 	return closeErr
+}
+
+func resolveEncryptionKey(ctx context.Context, store *query.AppConfigStore, security config.SecurityConfig) (string, error) {
+	if trimmed := strings.TrimSpace(security.EncryptionKey); trimmed != "" {
+		return trimmed, nil
+	}
+
+	if !security.AllowDBStoredKey {
+		return "", fmt.Errorf("EMERALD_ENCRYPTION_KEY is required")
+	}
+	if store == nil {
+		return "", fmt.Errorf("app config store is not configured")
+	}
+
+	key, ok, err := store.GetEncryptionKey(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("no legacy encryption key is stored in app_configs")
+	}
+
+	log.Printf("warning: using legacy database-stored encryption key because EMERALD_ALLOW_DB_STORED_KEY is enabled")
+	return key, nil
 }

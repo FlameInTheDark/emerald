@@ -87,6 +87,14 @@ Emerald packages the backend API, embedded React UI, SQLite persistence, websock
 
 ### Quick start
 
+Set an encryption key before the first run:
+
+```bash
+export EMERALD_ENCRYPTION_KEY="replace-with-32-characters!!!!"
+```
+
+Then start Emerald:
+
 ```bash
 make build
 make run
@@ -183,13 +191,17 @@ Emerald reads configuration from environment variables.
 | `EMERALD_AUTH_PASSWORD` | `admin` | Password used when creating the bootstrap user |
 | `EMERALD_AUTH_SESSION_TTL_HOURS` | `24` | Session lifetime in hours |
 | `EMERALD_AUTH_COOKIE_NAME` | `emerald_session` | Authentication cookie name |
-| `EMERALD_ENCRYPTION_KEY` | empty | Optional 32-character seed used to encrypt stored secrets |
+| `EMERALD_ENCRYPTION_KEY` | empty | Required 32-character key used to encrypt stored secrets |
+| `EMERALD_ALLOW_DB_STORED_KEY` | `false` | Legacy compatibility flag that allows startup with an encryption key already stored in `app_configs` |
 | `EMERALD_SKILLS_DIR` | empty | Optional override for the local skills directory |
 | `EMERALD_PLUGINS_DIR` | empty | Optional override for the local plugins directory |
 
 Notes:
 
-- If `EMERALD_ENCRYPTION_KEY` is not provided, Emerald generates one on first boot and stores it in the database.
+- `EMERALD_ENCRYPTION_KEY` is the preferred source of truth and is required for normal startup.
+- `EMERALD_ALLOW_DB_STORED_KEY=true` is only for legacy deployments that already have a key stored in `app_configs`. Use it as a temporary migration aid, then move the key into `EMERALD_ENCRYPTION_KEY`.
+- If both `EMERALD_ENCRYPTION_KEY` and `EMERALD_ALLOW_DB_STORED_KEY=true` are set, Emerald uses `EMERALD_ENCRYPTION_KEY`.
+- Emerald no longer generates or stores a new encryption key in the database on first boot.
 - Stored secrets include cluster credentials, channel tokens, and LLM provider keys.
 - If `EMERALD_SKILLS_DIR` is not set, Emerald searches upward from the current working directory and executable location for the nearest `.agents/skills`, then falls back to `./.agents/skills`.
 - If `EMERALD_PLUGINS_DIR` is not set, Emerald uses the local `.agents/plugins` path relative to the workspace or executable.
@@ -282,7 +294,7 @@ web/               React + Vite frontend
 
 ## ![](docs/assets/icons/activity.svg) Current Notes
 
-- Authentication sessions are stored in memory, so restarting the server signs users out.
+- Authentication sessions are stored in the database and can be revoked per user.
 - Only active pipelines participate in cron scheduling and channel-triggered execution.
 - Manual runs work even when a pipeline is inactive.
 - Tool nodes are only meaningful when connected to an `llm:agent` node.

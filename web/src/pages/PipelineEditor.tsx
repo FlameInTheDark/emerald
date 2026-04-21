@@ -913,8 +913,8 @@ function PipelineEditor() {
   const [pipelineStatus, setPipelineStatus] = useState<Pipeline['status']>('draft')
   const [editingDetails, setEditingDetails] = useState(false)
   const [showExecutionLog, setShowExecutionLog] = useState(false)
-  const [executionLogRealtimeReady, setExecutionLogRealtimeReady] = useState(false)
-  const [pendingRunWhenExecutionLogReady, setPendingRunWhenExecutionLogReady] = useState(false)
+  const [executionLogRealtimeReadyPipelineId, setExecutionLogRealtimeReadyPipelineId] = useState<string | null>(null)
+  const [pendingRunPipelineId, setPendingRunPipelineId] = useState<string | null>(null)
   const [preferredExecutionId, setPreferredExecutionId] = useState<string | null>(null)
   const [isFlowInteractive, setIsFlowInteractive] = useState(true)
   const [isNodePaletteOpen, setIsNodePaletteOpen] = useState(false)
@@ -936,8 +936,12 @@ function PipelineEditor() {
   const nameInputRef = useRef<HTMLInputElement>(null)
   const leaveResolverRef = useRef<((value: boolean) => void) | null>(null)
   const leavePromiseRef = useRef<Promise<boolean> | null>(null)
+  const currentPipelineIdRef = useRef<string | null>(id ?? null)
+  const runRequestsRef = useRef<Set<string>>(new Set())
   const selectedNodes = nodes.filter((node) => node.selected)
   const selectedNodeIds = selectedNodes.map((node) => node.id)
+  const isExecutionLogRealtimeReady = Boolean(id && executionLogRealtimeReadyPipelineId === id)
+  const isPendingRunForCurrentPipeline = Boolean(id && pendingRunPipelineId === id)
   const activeSelectionIds = selectedNodeIds.length > 0
     ? selectedNodeIds
     : selectedNodeId
@@ -1034,6 +1038,10 @@ function PipelineEditor() {
   }, [screenToFlowPosition])
 
   useEffect(() => {
+    currentPipelineIdRef.current = id ?? null
+  }, [id])
+
+  useEffect(() => {
     if (pipeline) {
       try {
         setPipelineStatus((pipeline.status as Pipeline['status']) || 'draft')
@@ -1061,6 +1069,18 @@ function PipelineEditor() {
       }
     }
   }, [pipeline, replaceDraft, setSelectedNodeId])
+
+  useEffect(() => {
+    setShowExecutionLog(false)
+    setExecutionLogRealtimeReadyPipelineId(null)
+    setPendingRunPipelineId(null)
+    setPreferredExecutionId(null)
+    setIsRunning(false)
+    setHighlightedNodes(new Set())
+    setNodeStatuses({})
+    setNodeLogs({})
+    setActiveNodeLogId(null)
+  }, [id])
 
   useEffect(() => {
     if (editingDetails && nameInputRef.current) {
@@ -1399,14 +1419,14 @@ function PipelineEditor() {
   })
 
   const runMutation = useMutation({
-    mutationFn: () => api.pipelines.run(id!),
-    onSuccess: (result: PipelineRunResponse) => {
-      setPreferredExecutionId(result.execution_id)
-      if (id) {
-        void queryClient.invalidateQueries({ queryKey: ['executions', id] })
-        void queryClient.invalidateQueries({ queryKey: ['executions', 'active', id] })
-        void queryClient.invalidateQueries({ queryKey: ['execution', result.execution_id] })
+    mutationFn: (pipelineId: string) => api.pipelines.run(pipelineId),
+    onSuccess: (result: PipelineRunResponse, pipelineId: string) => {
+      if (currentPipelineIdRef.current === pipelineId) {
+        setPreferredExecutionId(result.execution_id)
       }
+      void queryClient.invalidateQueries({ queryKey: ['executions', pipelineId] })
+      void queryClient.invalidateQueries({ queryKey: ['executions', 'active', pipelineId] })
+      void queryClient.invalidateQueries({ queryKey: ['execution', result.execution_id] })
       if (result.status === 'completed') {
         addToast({ type: 'success', title: 'Pipeline completed' })
       } else if (result.status === 'cancelled') {
@@ -1422,11 +1442,15 @@ function PipelineEditor() {
           message: result.error || 'The execution finished with an error.',
         })
       }
-      setIsRunning(false)
     },
     onError: (err) => {
       addToast({ type: 'error', title: 'Pipeline failed', message: err.message })
-      setIsRunning(false)
+    },
+    onSettled: (_result, _error, pipelineId: string) => {
+      runRequestsRef.current.delete(pipelineId)
+      if (currentPipelineIdRef.current === pipelineId) {
+        setIsRunning(false)
+      }
     },
   })
 
@@ -1438,25 +1462,35 @@ function PipelineEditor() {
     void saveCurrentPipeline(nextStatus)
   }, [saveCurrentPipeline])
 
-  const startPipelineRun = useCallback(() => {
-    setPendingRunWhenExecutionLogReady(false)
-    setIsRunning(true)
-    runMutation.mutate()
-  }, [runMutation])
+  const startPipelineRun = useCallback((pipelineId: string) => {
+    if (!pipelineId || runRequestsRef.current.has(pipelineId)) {
+      return
+    }
+
+    runRequestsRef.current.add(pipelineId)
+    setPendingRunPipelineId((current) => (current === pipelineId ? null : current))
+    if (id === pipelineId) {
+      setIsRunning(true)
+    }
+    runMutation.mutate(pipelineId)
+  }, [id, runMutation])
 
   const handleRun = useCallback(() => {
-    if (isRunning || pendingRunWhenExecutionLogReady) {
+    if (!id) {
+      return
+    }
+    if (isRunning || isPendingRunForCurrentPipeline || runRequestsRef.current.has(id)) {
       return
     }
 
     setShowExecutionLog(true)
-    if (executionLogRealtimeReady) {
-      startPipelineRun()
+    if (isExecutionLogRealtimeReady) {
+      startPipelineRun(id)
       return
     }
 
-    setPendingRunWhenExecutionLogReady(true)
-  }, [executionLogRealtimeReady, isRunning, pendingRunWhenExecutionLogReady, startPipelineRun])
+    setPendingRunPipelineId(id)
+  }, [id, isExecutionLogRealtimeReady, isPendingRunForCurrentPipeline, isRunning, startPipelineRun])
 
   const handleCancelDetailsEdit = useCallback(() => {
     updateDraftLive((currentDraft) => ({
@@ -1552,8 +1586,8 @@ function PipelineEditor() {
 
   const handleCloseExecutionLog = useCallback(() => {
     setShowExecutionLog(false)
-    setExecutionLogRealtimeReady(false)
-    setPendingRunWhenExecutionLogReady(false)
+    setExecutionLogRealtimeReadyPipelineId(null)
+    setPendingRunPipelineId(null)
     setHighlightedNodes(new Set())
     setNodeStatuses({})
     setNodeLogs({})
@@ -1576,12 +1610,16 @@ function PipelineEditor() {
   }, [activeNodeLogId, nodeLogs])
 
   useEffect(() => {
-    if (!pendingRunWhenExecutionLogReady || !executionLogRealtimeReady || isRunning) {
+    if (!id || pendingRunPipelineId !== id || executionLogRealtimeReadyPipelineId !== id || isRunning) {
       return
     }
 
-    startPipelineRun()
-  }, [executionLogRealtimeReady, isRunning, pendingRunWhenExecutionLogReady, startPipelineRun])
+    startPipelineRun(id)
+  }, [executionLogRealtimeReadyPipelineId, id, isRunning, pendingRunPipelineId, startPipelineRun])
+
+  const handleExecutionLogRealtimeStatusChange = useCallback((isReady: boolean) => {
+    setExecutionLogRealtimeReadyPipelineId(isReady ? (id ?? null) : null)
+  }, [id])
 
   const applyNodeChangesWithConstraints = useCallback((changes: Parameters<OnNodesChange>[0], currentNodes: Node[]) => {
     return applyNodeChanges(changes, currentNodes).map((node) => {
@@ -3039,7 +3077,7 @@ function PipelineEditor() {
                   </div>
                   <Button
                     size="sm"
-                    loading={isRunning || pendingRunWhenExecutionLogReady}
+                    loading={isRunning || isPendingRunForCurrentPipeline}
                     onClick={handleRun}
                     className="rounded-xl"
                   >
@@ -3219,7 +3257,7 @@ function PipelineEditor() {
                   preferredExecutionId={preferredExecutionId}
                   onExecutionSelect={handleExecutionHighlight}
                   onAddToAssistant={handleAddExecutionLogToAssistant}
-                  onRealtimeStatusChange={setExecutionLogRealtimeReady}
+                  onRealtimeStatusChange={handleExecutionLogRealtimeStatusChange}
                 />
               </Panel>
             )}

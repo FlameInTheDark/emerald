@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -119,7 +120,7 @@ func (c *Client) OpenPage(ctx context.Context, cfg RuntimeConfig, req OpenPageRe
 	case PageObservationModeJina:
 		return c.openPageWithJina(ctx, cfg, targetURL, maxCharacters)
 	case PageObservationModeHTTP:
-		return c.openPageWithHTTP(ctx, targetURL, maxCharacters)
+		return c.openPageWithHTTP(ctx, cfg, targetURL, maxCharacters)
 	default:
 		return nil, fmt.Errorf("unsupported page observation mode %q", mode)
 	}
@@ -136,7 +137,7 @@ func (c *Client) searchSearXNG(ctx context.Context, cfg RuntimeConfig, query str
 		return nil, err
 	}
 
-	responseBody, _, _, _, err := c.doRequest(ctx, endpoint, "", nil)
+	responseBody, _, _, _, err := c.doRequest(ctx, endpoint, "", nil, cfg.AllowPrivateNetwork)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +186,7 @@ func (c *Client) searchJina(ctx context.Context, cfg RuntimeConfig, query string
 		"Accept":        "text/plain",
 	}
 
-	responseBody, _, _, _, err := c.doRequest(ctx, endpoint, "", headers)
+	responseBody, _, _, _, err := c.doRequest(ctx, endpoint, "", headers, cfg.AllowPrivateNetwork)
 	if err != nil {
 		return nil, err
 	}
@@ -199,11 +200,11 @@ func (c *Client) searchJina(ctx context.Context, cfg RuntimeConfig, query string
 	}, nil
 }
 
-func (c *Client) openPageWithHTTP(ctx context.Context, targetURL string, maxCharacters int) (*OpenPageResponse, error) {
+func (c *Client) openPageWithHTTP(ctx context.Context, cfg RuntimeConfig, targetURL string, maxCharacters int) (*OpenPageResponse, error) {
 	responseBody, finalURL, contentType, statusCode, err := c.doRequest(ctx, targetURL, "", map[string]string{
 		"Accept":     "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain,application/json;q=0.8,*/*;q=0.7",
 		"User-Agent": defaultHTTPUserAgent,
-	})
+	}, cfg.AllowPrivateNetwork)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +239,7 @@ func (c *Client) openPageWithJina(ctx context.Context, cfg RuntimeConfig, target
 		headers["Authorization"] = "Bearer " + cfg.JinaAPIKey
 	}
 
-	responseBody, _, contentType, statusCode, err := c.doRequest(ctx, readerURL, "", headers)
+	responseBody, _, contentType, statusCode, err := c.doRequest(ctx, readerURL, "", headers, cfg.AllowPrivateNetwork)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +259,7 @@ func (c *Client) openPageWithJina(ctx context.Context, cfg RuntimeConfig, target
 	}, nil
 }
 
-func (c *Client) doRequest(ctx context.Context, endpoint string, method string, headers map[string]string) ([]byte, string, string, int, error) {
+func (c *Client) doRequest(ctx context.Context, endpoint string, method string, headers map[string]string, allowPrivateNetwork bool) ([]byte, string, string, int, error) {
 	httpMethod := strings.TrimSpace(method)
 	if httpMethod == "" {
 		httpMethod = http.MethodGet
@@ -267,6 +268,9 @@ func (c *Client) doRequest(ctx context.Context, endpoint string, method string, 
 	request, err := http.NewRequestWithContext(ctx, httpMethod, endpoint, nil)
 	if err != nil {
 		return nil, "", "", 0, fmt.Errorf("build request: %w", err)
+	}
+	if err := validateOutboundTarget(ctx, request.URL, allowPrivateNetwork); err != nil {
+		return nil, "", "", 0, err
 	}
 	for key, value := range headers {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
@@ -278,7 +282,8 @@ func (c *Client) doRequest(ctx context.Context, endpoint string, method string, 
 		request.Header.Set("User-Agent", defaultHTTPUserAgent)
 	}
 
-	response, err := c.httpClient.Do(request)
+	client := c.cloneHTTPClient(ctx, allowPrivateNetwork)
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, "", "", 0, fmt.Errorf("perform request: %w", err)
 	}
@@ -327,6 +332,67 @@ func buildSearXNGSearchURL(baseURL string, query string) (string, error) {
 	values.Set("format", "json")
 	parsed.RawQuery = values.Encode()
 	return parsed.String(), nil
+}
+
+func (c *Client) cloneHTTPClient(ctx context.Context, allowPrivateNetwork bool) *http.Client {
+	clone := *c.httpClient
+	previousRedirect := clone.CheckRedirect
+	clone.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := validateOutboundTarget(ctx, req.URL, allowPrivateNetwork); err != nil {
+			return err
+		}
+		if previousRedirect != nil {
+			return previousRedirect(req, via)
+		}
+		return nil
+	}
+	return &clone
+}
+
+func validateOutboundTarget(ctx context.Context, target *url.URL, allowPrivateNetwork bool) error {
+	if allowPrivateNetwork || target == nil {
+		return nil
+	}
+
+	host := strings.TrimSpace(target.Hostname())
+	if host == "" {
+		return fmt.Errorf("URL must include a host")
+	}
+	if isLocalHostname(host) {
+		return fmt.Errorf("private and loopback web targets are disabled")
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		if isRestrictedIP(ip) {
+			return fmt.Errorf("private and loopback web targets are disabled")
+		}
+		return nil
+	}
+
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("resolve target host: %w", err)
+	}
+	for _, address := range addresses {
+		if isRestrictedIP(address.IP) {
+			return fmt.Errorf("private and loopback web targets are disabled")
+		}
+	}
+	return nil
+}
+
+func isLocalHostname(host string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(host))
+	return normalized == "localhost" || strings.HasSuffix(normalized, ".localhost")
+}
+
+func isRestrictedIP(ip net.IP) bool {
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified()
 }
 
 func normalizeTargetURL(raw string) (string, error) {

@@ -37,11 +37,16 @@ type Runner interface {
 }
 
 type ExecRunner struct {
-	baseDir string
+	baseDir       string
+	allowAbsolute bool
 }
 
-func NewRunner(baseDir string) *ExecRunner {
-	return &ExecRunner{baseDir: baseDir}
+func NewRunner(baseDir string, allowAbsolute ...bool) *ExecRunner {
+	runner := &ExecRunner{baseDir: baseDir}
+	if len(allowAbsolute) > 0 {
+		runner.allowAbsolute = allowAbsolute[0]
+	}
+	return runner
 }
 
 func (r *ExecRunner) WorkspaceRoot() (string, error) {
@@ -128,6 +133,9 @@ func (r *ExecRunner) resolveWorkingDirectory(raw string) (string, error) {
 	}
 
 	if filepath.IsAbs(raw) {
+		if !r.allowAbsolute {
+			return "", fmt.Errorf("absolute working directories are disabled")
+		}
 		return filepath.Clean(raw), nil
 	}
 

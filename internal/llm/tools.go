@@ -17,6 +17,15 @@ import (
 )
 
 type ToolHandler func(ctx context.Context, args json.RawMessage) (any, error)
+type ToolAuditLogger func(ctx context.Context, entry ToolAuditEntry) error
+
+type ToolAuditEntry struct {
+	Name     string
+	Args     json.RawMessage
+	Duration time.Duration
+	Success  bool
+	Error    string
+}
 
 type ToolClusterStore interface {
 	List(ctx context.Context) ([]models.Cluster, error)
@@ -68,6 +77,7 @@ type ToolRegistryOptions struct {
 	ShellRunner                shellcmd.Runner
 	WorkspaceRoot              string
 	WebToolsConfig             *webtools.RuntimeConfig
+	AuditLogger                ToolAuditLogger
 }
 
 type ToolRegistry struct {
@@ -87,6 +97,7 @@ type ToolRegistry struct {
 	fileTools                  *filetools.Service
 	webToolsConfig             *webtools.RuntimeConfig
 	webToolsClient             *webtools.Client
+	auditLogger                ToolAuditLogger
 }
 
 type proxmoxToolArgs struct {
@@ -148,6 +159,7 @@ func NewToolRegistryWithOptions(opts ToolRegistryOptions) *ToolRegistry {
 		fileTools:                  workspaceTools,
 		webToolsConfig:             opts.WebToolsConfig,
 		webToolsClient:             webtools.NewClient(nil),
+		auditLogger:                opts.AuditLogger,
 	}
 
 	if r.enableProxmox {
@@ -563,7 +575,44 @@ func ExecuteShellTool(ctx context.Context, runner shellcmd.Runner, args json.Raw
 
 func (r *ToolRegistry) Register(def ToolDefinition, handler ToolHandler) {
 	r.tools[def.Function.Name] = def
-	r.handlers[def.Function.Name] = handler
+	if handler == nil {
+		r.handlers[def.Function.Name] = nil
+		return
+	}
+
+	if r.auditLogger == nil || !shouldAuditTool(def.Function.Name) {
+		r.handlers[def.Function.Name] = handler
+		return
+	}
+
+	r.handlers[def.Function.Name] = func(ctx context.Context, args json.RawMessage) (any, error) {
+		started := time.Now()
+		result, err := handler(ctx, args)
+
+		entry := ToolAuditEntry{
+			Name:     def.Function.Name,
+			Args:     append(json.RawMessage(nil), args...),
+			Duration: time.Since(started),
+			Success:  err == nil,
+		}
+		if err != nil {
+			entry.Error = err.Error()
+		}
+		_ = r.auditLogger(ctx, entry)
+
+		return result, err
+	}
+}
+
+func shouldAuditTool(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "list_directory", "glob_files", "grep_files", "read_file", "edit_file", "write_file",
+		"run_shell_command",
+		"search_web", "open_web_page":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *ToolRegistry) kubernetesToolParameters(extraProperties map[string]any, required ...string) map[string]any {

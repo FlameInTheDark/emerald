@@ -9,6 +9,7 @@ type Cluster struct {
 	Port           int       `json:"port"`
 	APITokenID     string    `json:"api_token_id"`
 	APITokenSecret string    `json:"api_token_secret,omitempty"`
+	HasSecret      bool      `json:"-"`
 	SkipTLSVerify  bool      `json:"skip_tls_verify"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
@@ -19,6 +20,7 @@ type KubernetesCluster struct {
 	Name             string    `json:"name"`
 	SourceType       string    `json:"source_type"`
 	Kubeconfig       string    `json:"kubeconfig,omitempty"`
+	HasSecret        bool      `json:"-"`
 	ContextName      string    `json:"context_name"`
 	DefaultNamespace string    `json:"default_namespace"`
 	Server           string    `json:"server"`
@@ -34,11 +36,12 @@ type AppConfig struct {
 }
 
 type User struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Password  string    `json:"-"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	Password     string    `json:"-"`
+	IsSuperAdmin bool      `json:"is_super_admin"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type LLMProvider struct {
@@ -49,6 +52,7 @@ type LLMProvider struct {
 	BaseURL      *string   `json:"base_url,omitempty"`
 	Model        string    `json:"model"`
 	Config       *string   `json:"config,omitempty"`
+	HasSecret    bool      `json:"-"`
 	IsDefault    bool      `json:"is_default"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -59,6 +63,7 @@ type Channel struct {
 	Name           string    `json:"name"`
 	Type           string    `json:"type"`
 	Config         *string   `json:"config,omitempty"`
+	HasSecret      bool      `json:"-"`
 	WelcomeMessage string    `json:"welcome_message"`
 	ConnectURL     *string   `json:"connect_url,omitempty"`
 	Enabled        bool      `json:"enabled"`
@@ -154,6 +159,7 @@ type Secret struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	Value     string    `json:"-"`
+	HasValue  bool      `json:"-"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

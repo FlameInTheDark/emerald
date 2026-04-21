@@ -26,7 +26,7 @@ func NewSecretStore(db *sql.DB, encryptor *crypto.Encryptor) *SecretStore {
 }
 
 func (s *SecretStore) List(ctx context.Context) ([]models.Secret, error) {
-	query, args, err := psql.Select("id", "name", "created_at", "updated_at").
+	query, args, err := psql.Select("id", "name", "(CASE WHEN value != '' THEN 1 ELSE 0 END) AS has_value", "created_at", "updated_at").
 		From("secrets").
 		OrderBy("name ASC").
 		ToSql()
@@ -45,7 +45,7 @@ func (s *SecretStore) List(ctx context.Context) ([]models.Secret, error) {
 	secrets := make([]models.Secret, 0)
 	for rows.Next() {
 		var secret models.Secret
-		if err := rows.Scan(&secret.ID, &secret.Name, &secret.CreatedAt, &secret.UpdatedAt); err != nil {
+		if err := rows.Scan(&secret.ID, &secret.Name, &secret.HasValue, &secret.CreatedAt, &secret.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan secret: %w", err)
 		}
 		secrets = append(secrets, secret)
@@ -55,7 +55,7 @@ func (s *SecretStore) List(ctx context.Context) ([]models.Secret, error) {
 }
 
 func (s *SecretStore) GetByID(ctx context.Context, id string) (*models.Secret, error) {
-	query, args, err := psql.Select("id", "name", "created_at", "updated_at").
+	query, args, err := psql.Select("id", "name", "(CASE WHEN value != '' THEN 1 ELSE 0 END) AS has_value", "created_at", "updated_at").
 		From("secrets").
 		Where(sq.Eq{"id": strings.TrimSpace(id)}).
 		ToSql()
@@ -64,7 +64,7 @@ func (s *SecretStore) GetByID(ctx context.Context, id string) (*models.Secret, e
 	}
 
 	var secret models.Secret
-	err = s.db.QueryRowContext(ctx, query, args...).Scan(&secret.ID, &secret.Name, &secret.CreatedAt, &secret.UpdatedAt)
+	err = s.db.QueryRowContext(ctx, query, args...).Scan(&secret.ID, &secret.Name, &secret.HasValue, &secret.CreatedAt, &secret.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -73,6 +73,33 @@ func (s *SecretStore) GetByID(ctx context.Context, id string) (*models.Secret, e
 	}
 
 	return &secret, nil
+}
+
+func (s *SecretStore) GetValueByID(ctx context.Context, id string) (string, bool, error) {
+	query, args, err := psql.Select("value").
+		From("secrets").
+		Where(sq.Eq{"id": strings.TrimSpace(id)}).
+		Limit(1).
+		ToSql()
+	if err != nil {
+		return "", false, fmt.Errorf("build query: %w", err)
+	}
+
+	var encryptedValue string
+	err = s.db.QueryRowContext(ctx, query, args...).Scan(&encryptedValue)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("query secret value: %w", err)
+	}
+
+	decryptedValue, err := s.decrypt(encryptedValue)
+	if err != nil {
+		return "", false, fmt.Errorf("decrypt secret value: %w", err)
+	}
+
+	return decryptedValue, true, nil
 }
 
 func (s *SecretStore) GetValueByName(ctx context.Context, name string) (string, bool, error) {

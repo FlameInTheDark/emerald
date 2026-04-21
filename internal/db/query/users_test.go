@@ -5,12 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/FlameInTheDark/emerald/internal/crypto"
+	"github.com/FlameInTheDark/emerald/internal/auth"
 	"github.com/FlameInTheDark/emerald/internal/db"
 	"github.com/FlameInTheDark/emerald/internal/db/models"
 )
 
-func TestUserStoreCreateEncryptsPassword(t *testing.T) {
+func TestUserStoreCreateHashesPassword(t *testing.T) {
 	t.Parallel()
 
 	database, err := db.New(filepath.Join(t.TempDir(), "emerald.db"))
@@ -25,18 +25,7 @@ func TestUserStoreCreateEncryptsPassword(t *testing.T) {
 		t.Fatalf("db.Migrate: %v", err)
 	}
 
-	appConfigStore := NewAppConfigStore(database.DB)
-	key, err := appConfigStore.EnsureEncryptionKey(context.Background(), "")
-	if err != nil {
-		t.Fatalf("EnsureEncryptionKey: %v", err)
-	}
-
-	encryptor, err := crypto.NewEncryptor(key)
-	if err != nil {
-		t.Fatalf("NewEncryptor: %v", err)
-	}
-
-	store := NewUserStore(database.DB, encryptor)
+	store := NewUserStore(database.DB, nil)
 	if err := store.Create(context.Background(), &models.User{
 		Username: "admin",
 		Password: "admin",
@@ -49,7 +38,10 @@ func TestUserStoreCreateEncryptsPassword(t *testing.T) {
 		t.Fatalf("query raw password: %v", err)
 	}
 	if rawPassword == "admin" {
-		t.Fatal("expected stored password to be encrypted")
+		t.Fatal("expected stored password to be hashed")
+	}
+	if !auth.IsPasswordHash(rawPassword) {
+		t.Fatalf("raw password = %q, want argon2id hash", rawPassword)
 	}
 
 	user, err := store.GetByUsername(context.Background(), "admin")
@@ -59,8 +51,15 @@ func TestUserStoreCreateEncryptsPassword(t *testing.T) {
 	if user == nil {
 		t.Fatal("expected user")
 	}
-	if user.Password != "admin" {
-		t.Fatalf("decrypted password = %q, want admin", user.Password)
+	if user.Password != rawPassword {
+		t.Fatalf("user password = %q, want stored hash", user.Password)
+	}
+	match, err := auth.VerifyPasswordHash(user.Password, "admin")
+	if err != nil {
+		t.Fatalf("VerifyPasswordHash: %v", err)
+	}
+	if !match {
+		t.Fatal("expected password hash to verify")
 	}
 }
 
@@ -79,18 +78,7 @@ func TestUserStoreGetByUsernameReturnsNilWhenMissing(t *testing.T) {
 		t.Fatalf("db.Migrate: %v", err)
 	}
 
-	appConfigStore := NewAppConfigStore(database.DB)
-	key, err := appConfigStore.EnsureEncryptionKey(context.Background(), "")
-	if err != nil {
-		t.Fatalf("EnsureEncryptionKey: %v", err)
-	}
-
-	encryptor, err := crypto.NewEncryptor(key)
-	if err != nil {
-		t.Fatalf("NewEncryptor: %v", err)
-	}
-
-	store := NewUserStore(database.DB, encryptor)
+	store := NewUserStore(database.DB, nil)
 	user, err := store.GetByUsername(context.Background(), "missing")
 	if err != nil {
 		t.Fatalf("GetByUsername: %v", err)
@@ -100,7 +88,7 @@ func TestUserStoreGetByUsernameReturnsNilWhenMissing(t *testing.T) {
 	}
 }
 
-func TestUserStoreUpdatePasswordEncryptsNewValue(t *testing.T) {
+func TestUserStoreUpdatePasswordHashesNewValue(t *testing.T) {
 	t.Parallel()
 
 	database, err := db.New(filepath.Join(t.TempDir(), "emerald.db"))
@@ -115,18 +103,7 @@ func TestUserStoreUpdatePasswordEncryptsNewValue(t *testing.T) {
 		t.Fatalf("db.Migrate: %v", err)
 	}
 
-	appConfigStore := NewAppConfigStore(database.DB)
-	key, err := appConfigStore.EnsureEncryptionKey(context.Background(), "")
-	if err != nil {
-		t.Fatalf("EnsureEncryptionKey: %v", err)
-	}
-
-	encryptor, err := crypto.NewEncryptor(key)
-	if err != nil {
-		t.Fatalf("NewEncryptor: %v", err)
-	}
-
-	store := NewUserStore(database.DB, encryptor)
+	store := NewUserStore(database.DB, nil)
 	user := &models.User{
 		Username: "operator",
 		Password: "before",
@@ -144,7 +121,10 @@ func TestUserStoreUpdatePasswordEncryptsNewValue(t *testing.T) {
 		t.Fatalf("query raw password: %v", err)
 	}
 	if rawPassword == "after" {
-		t.Fatal("expected updated password to be encrypted")
+		t.Fatal("expected updated password to be hashed")
+	}
+	if !auth.IsPasswordHash(rawPassword) {
+		t.Fatalf("raw password = %q, want argon2id hash", rawPassword)
 	}
 
 	updatedUser, err := store.GetByUsername(context.Background(), "operator")
@@ -154,7 +134,11 @@ func TestUserStoreUpdatePasswordEncryptsNewValue(t *testing.T) {
 	if updatedUser == nil {
 		t.Fatal("expected user")
 	}
-	if updatedUser.Password != "after" {
-		t.Fatalf("updated password = %q, want after", updatedUser.Password)
+	match, err := auth.VerifyPasswordHash(updatedUser.Password, "after")
+	if err != nil {
+		t.Fatalf("VerifyPasswordHash: %v", err)
+	}
+	if !match {
+		t.Fatal("expected updated password hash to verify")
 	}
 }

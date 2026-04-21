@@ -21,6 +21,7 @@ func TestRunPipelineCommandUsesExecutionRunnerExecutionID(t *testing.T) {
 	t.Setenv("EMERALD_DB_PATH", dbPath)
 	t.Setenv("EMERALD_SKILLS_DIR", filepath.Join(tempDir, "skills"))
 	t.Setenv("EMERALD_PLUGINS_DIR", filepath.Join(tempDir, "plugins"))
+	t.Setenv("EMERALD_ENCRYPTION_KEY", strings.Repeat("k", 32))
 
 	database, err := db.New(dbPath)
 	if err != nil {

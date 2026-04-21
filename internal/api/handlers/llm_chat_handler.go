@@ -36,6 +36,11 @@ type LLMChatHandler struct {
 	shellRunner       shellcmd.Runner
 	assistantProfiles *assistants.Store
 	webTools          *webtools.Store
+	auditLogStore     *query.AuditLogStore
+}
+
+type LLMChatHandlerOptions struct {
+	AuditLogStore *query.AuditLogStore
 }
 
 type llmChatRequest struct {
@@ -126,8 +131,9 @@ func NewLLMChatHandler(
 	shellRunner shellcmd.Runner,
 	assistantProfiles *assistants.Store,
 	webTools *webtools.Store,
+	opts ...LLMChatHandlerOptions,
 ) *LLMChatHandler {
-	return &LLMChatHandler{
+	handler := &LLMChatHandler{
 		providerStore:     providerStore,
 		clusterStore:      clusterStore,
 		kubernetesStore:   kubernetesStore,
@@ -140,6 +146,10 @@ func NewLLMChatHandler(
 		assistantProfiles: assistantProfiles,
 		webTools:          webTools,
 	}
+	if len(opts) > 0 {
+		handler.auditLogStore = opts[0].AuditLogStore
+	}
+	return handler
 }
 
 func (h *LLMChatHandler) ListConversations(c *fiber.Ctx) error {

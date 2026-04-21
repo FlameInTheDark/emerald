@@ -55,17 +55,23 @@ type bundleRuntime struct {
 
 type Manager struct {
 	root    string
+	enabled bool
 	mu      sync.RWMutex
 	nodes   map[string]NodeBinding
 	bundles map[string]*bundleRuntime
 }
 
-func NewManager(root string) *Manager {
-	return &Manager{
+func NewManager(root string, enabled ...bool) *Manager {
+	manager := &Manager{
 		root:    strings.TrimSpace(root),
+		enabled: true,
 		nodes:   make(map[string]NodeBinding),
 		bundles: make(map[string]*bundleRuntime),
 	}
+	if len(enabled) > 0 {
+		manager.enabled = enabled[0]
+	}
+	return manager
 }
 
 func (m *Manager) Root() string {
@@ -77,6 +83,10 @@ func (m *Manager) Root() string {
 
 func (m *Manager) Refresh(ctx context.Context) error {
 	if m == nil {
+		return nil
+	}
+	if !m.enabled {
+		m.Stop()
 		return nil
 	}
 

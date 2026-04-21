@@ -47,7 +47,7 @@ func (s *ClusterStore) Create(ctx context.Context, c *models.Cluster) error {
 }
 
 func (s *ClusterStore) GetByID(ctx context.Context, id string) (*models.Cluster, error) {
-	query, args, err := psql.Select("id", "name", "host", "port", "api_token_id", "api_token_secret", "skip_tls_verify", "created_at", "updated_at").
+	query, args, err := psql.Select("id", "name", "host", "port", "api_token_id", "api_token_secret", "(CASE WHEN api_token_secret != '' THEN 1 ELSE 0 END) AS has_secret", "skip_tls_verify", "created_at", "updated_at").
 		From("clusters").
 		Where(sq.Eq{"id": id}).
 		ToSql()
@@ -57,7 +57,7 @@ func (s *ClusterStore) GetByID(ctx context.Context, id string) (*models.Cluster,
 
 	var c models.Cluster
 	err = s.db.QueryRowContext(ctx, query, args...).Scan(
-		&c.ID, &c.Name, &c.Host, &c.Port, &c.APITokenID, &c.APITokenSecret,
+		&c.ID, &c.Name, &c.Host, &c.Port, &c.APITokenID, &c.APITokenSecret, &c.HasSecret,
 		&c.SkipTLSVerify, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
@@ -75,7 +75,7 @@ func (s *ClusterStore) GetByID(ctx context.Context, id string) (*models.Cluster,
 }
 
 func (s *ClusterStore) List(ctx context.Context) ([]models.Cluster, error) {
-	query, args, err := psql.Select("id", "name", "host", "port", "api_token_id", "skip_tls_verify", "created_at", "updated_at").
+	query, args, err := psql.Select("id", "name", "host", "port", "api_token_id", "(CASE WHEN api_token_secret != '' THEN 1 ELSE 0 END) AS has_secret", "skip_tls_verify", "created_at", "updated_at").
 		From("clusters").
 		OrderBy("created_at DESC").
 		ToSql()
@@ -94,7 +94,7 @@ func (s *ClusterStore) List(ctx context.Context) ([]models.Cluster, error) {
 	var clusters []models.Cluster
 	for rows.Next() {
 		var c models.Cluster
-		if err := rows.Scan(&c.ID, &c.Name, &c.Host, &c.Port, &c.APITokenID, &c.SkipTLSVerify, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Host, &c.Port, &c.APITokenID, &c.HasSecret, &c.SkipTLSVerify, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan cluster: %w", err)
 		}
 		clusters = append(clusters, c)

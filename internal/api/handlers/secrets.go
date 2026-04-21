@@ -2,16 +2,21 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/FlameInTheDark/emerald/internal/auth"
 	"github.com/FlameInTheDark/emerald/internal/db/models"
 	"github.com/FlameInTheDark/emerald/internal/db/query"
 )
 
 type SecretHandler struct {
-	store *query.SecretStore
+	store         *query.SecretStore
+	authService   *auth.Service
+	auditLogStore *query.AuditLogStore
 }
 
 type secretUpsertRequest struct {
@@ -21,6 +26,19 @@ type secretUpsertRequest struct {
 
 func NewSecretHandler(store *query.SecretStore) *SecretHandler {
 	return &SecretHandler{store: store}
+}
+
+type SecretHandlerOptions struct {
+	AuthService   *auth.Service
+	AuditLogStore *query.AuditLogStore
+}
+
+func NewSecretHandlerWithOptions(store *query.SecretStore, opts SecretHandlerOptions) *SecretHandler {
+	return &SecretHandler{
+		store:         store,
+		authService:   opts.AuthService,
+		auditLogStore: opts.AuditLogStore,
+	}
 }
 
 func (h *SecretHandler) List(c *fiber.Ctx) error {
@@ -36,7 +54,11 @@ func (h *SecretHandler) List(c *fiber.Ctx) error {
 		return c.JSON([]models.Secret{})
 	}
 
-	return c.JSON(secrets)
+	responses := make([]secretResponse, 0, len(secrets))
+	for _, secret := range secrets {
+		responses = append(responses, newSecretResponse(secret, ""))
+	}
+	return c.JSON(responses)
 }
 
 func (h *SecretHandler) Get(c *fiber.Ctx) error {
@@ -44,7 +66,7 @@ func (h *SecretHandler) Get(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
 	}
-	return c.JSON(secret)
+	return c.JSON(newSecretResponse(*secret, ""))
 }
 
 func (h *SecretHandler) Create(c *fiber.Ctx) error {
@@ -73,7 +95,7 @@ func (h *SecretHandler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(created)
+	return c.Status(fiber.StatusCreated).JSON(newSecretResponse(*created, ""))
 }
 
 func (h *SecretHandler) Update(c *fiber.Ctx) error {
@@ -111,7 +133,7 @@ func (h *SecretHandler) Update(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	return c.JSON(refreshed)
+	return c.JSON(newSecretResponse(*refreshed, ""))
 }
 
 func (h *SecretHandler) Delete(c *fiber.Ctx) error {
@@ -130,6 +152,35 @@ func (h *SecretHandler) Delete(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+func (h *SecretHandler) Reveal(c *fiber.Ctx) error {
+	if h == nil || h.store == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "secret store is not configured"})
+	}
+	session, err := requireRevealAuthorization(c, h.authService)
+	if err != nil {
+		return c.Status(statusCodeForRevealError(err)).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	secret, err := h.loadSecret(c.Context(), c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	value, ok, err := h.store.GetValueByID(c.Context(), secret.ID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if !ok {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "secret not found"})
+	}
+
+	if err := writeAuditLog(c, h.auditLogStore, session, "secret.reveal", "secret", secret.ID, map[string]any{"name": secret.Name}); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to write audit log"})
+	}
+
+	return c.JSON(newSecretResponse(*secret, value))
+}
+
 func (h *SecretHandler) loadSecret(ctx context.Context, id string) (*models.Secret, error) {
 	if h == nil || h.store == nil {
 		return nil, fiber.ErrServiceUnavailable
@@ -143,4 +194,35 @@ func (h *SecretHandler) loadSecret(ctx context.Context, id string) (*models.Secr
 		return nil, fiber.ErrNotFound
 	}
 	return secret, nil
+}
+
+type secretResponse struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	HasValue  bool      `json:"has_value"`
+	Value     string    `json:"value,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func newSecretResponse(secret models.Secret, value string) secretResponse {
+	response := secretResponse{
+		ID:        secret.ID,
+		Name:      secret.Name,
+		HasValue:  secret.HasValue || value != "",
+		CreatedAt: secret.CreatedAt,
+		UpdatedAt: secret.UpdatedAt,
+	}
+	if value != "" {
+		response.Value = value
+	}
+	return response
+}
+
+func statusCodeForRevealError(err error) int {
+	var fiberErr *fiber.Error
+	if errors.As(err, &fiberErr) {
+		return fiberErr.Code
+	}
+	return fiber.StatusInternalServerError
 }

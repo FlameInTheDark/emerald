@@ -23,14 +23,26 @@ func (s *stubUserStore) GetByUsername(_ context.Context, username string) (*mode
 	return nil, nil
 }
 
+func (s *stubUserStore) UpdatePassword(_ context.Context, id string, password string) error {
+	if s.user == nil || s.user.ID != id {
+		return nil
+	}
+	hashed, err := iauth.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	s.user.Password = hashed
+	return nil
+}
+
 func TestAuthMiddlewareProtectsPrivateRoutes(t *testing.T) {
 	t.Parallel()
 
 	service := iauth.NewService(&stubUserStore{
-		user: &models.User{ID: "user-1", Username: "admin", Password: "admin"},
+		user: &models.User{ID: "user-1", Username: "admin", Password: mustHashPassword(t, "admin")},
 	}, iauth.Config{})
 	app := fiber.New()
-	app.Use("/api/v1", authMiddleware(service))
+	app.Use("/api/v1", authMiddleware(service, false))
 	app.Get("/api/v1/health", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
 	app.Get("/api/v1/private", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
 
@@ -48,10 +60,10 @@ func TestAuthMiddlewareAllowsPublicRoutes(t *testing.T) {
 	t.Parallel()
 
 	service := iauth.NewService(&stubUserStore{
-		user: &models.User{ID: "user-1", Username: "admin", Password: "admin"},
+		user: &models.User{ID: "user-1", Username: "admin", Password: mustHashPassword(t, "admin")},
 	}, iauth.Config{})
 	app := fiber.New()
-	app.Use("/api/v1", authMiddleware(service))
+	app.Use("/api/v1", authMiddleware(service, false))
 	app.Get("/api/v1/health", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -68,7 +80,7 @@ func TestAuthMiddlewareAllowsAuthenticatedRoutes(t *testing.T) {
 	t.Parallel()
 
 	service := iauth.NewService(&stubUserStore{
-		user: &models.User{ID: "user-1", Username: "admin", Password: "admin"},
+		user: &models.User{ID: "user-1", Username: "admin", Password: mustHashPassword(t, "admin")},
 	}, iauth.Config{})
 	token, _, err := service.Login(context.Background(), "admin", "admin")
 	if err != nil {
@@ -76,7 +88,7 @@ func TestAuthMiddlewareAllowsAuthenticatedRoutes(t *testing.T) {
 	}
 
 	app := fiber.New()
-	app.Use("/api/v1", authMiddleware(service))
+	app.Use("/api/v1", authMiddleware(service, false))
 	app.Get("/api/v1/private", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/private", nil)
@@ -88,4 +100,14 @@ func TestAuthMiddlewareAllowsAuthenticatedRoutes(t *testing.T) {
 	if res.StatusCode != fiber.StatusOK {
 		t.Fatalf("status = %d, want %d", res.StatusCode, fiber.StatusOK)
 	}
+}
+
+func mustHashPassword(t *testing.T, password string) string {
+	t.Helper()
+
+	hashed, err := iauth.HashPassword(password)
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	return hashed
 }
