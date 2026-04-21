@@ -1,3 +1,11 @@
+## [1.11.1](https://github.com/FlameInTheDark/emerald/compare/v1.11.0...v1.11.1) (2026-04-21)
+
+
+### Bug Fixes
+
+* security fixes ([f389dcb](https://github.com/FlameInTheDark/emerald/commit/f389dcb57d6ebf27114d8b60928a3fc3729100df))
+* test race fix ([a7d9b15](https://github.com/FlameInTheDark/emerald/commit/a7d9b15059ffe375e9ee2960c321538935b99652))
+
 # [1.11.0](https://github.com/FlameInTheDark/emerald/compare/v1.10.0...v1.11.0) (2026-04-19)
 
 
