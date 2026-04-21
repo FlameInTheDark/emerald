@@ -14,8 +14,11 @@ func TestServiceValidateDefinitionAllowsUnavailablePluginNodesForDrafts(t *testi
 	service := NewService(nil)
 	err := service.ValidateDefinition(
 		context.Background(),
-		`[{"id":"plugin-node","data":{"type":"action:plugin/acme/http"}}]`,
-		`[]`,
+		`[
+			{"id":"trigger","data":{"type":"trigger:manual"}},
+			{"id":"plugin-node","data":{"type":"action:plugin/acme/http"}}
+		]`,
+		`[{"id":"edge-1","source":"trigger","target":"plugin-node"}]`,
 		true,
 	)
 	if err != nil {
@@ -29,8 +32,11 @@ func TestServiceValidateDefinitionRejectsUnavailablePluginNodesForActiveFlows(t 
 	service := NewService(nil)
 	err := service.ValidateDefinition(
 		context.Background(),
-		`[{"id":"plugin-node","data":{"type":"action:plugin/acme/http"}}]`,
-		`[]`,
+		`[
+			{"id":"trigger","data":{"type":"trigger:manual"}},
+			{"id":"plugin-node","data":{"type":"action:plugin/acme/http"}}
+		]`,
+		`[{"id":"edge-1","source":"trigger","target":"plugin-node"}]`,
 		false,
 	)
 	if err == nil {
@@ -59,10 +65,14 @@ func TestServiceValidateDefinitionRejectsMissingHandleForPluginActionOutputs(t *
 	err := service.ValidateDefinition(
 		context.Background(),
 		`[
+			{"id":"trigger","data":{"type":"trigger:manual"}},
 			{"id":"router","data":{"type":"action:plugin/acme/router"}},
 			{"id":"next","data":{"type":"action:http"}}
 		]`,
-		`[{"id":"edge-1","source":"router","target":"next"}]`,
+		`[
+			{"id":"edge-0","source":"trigger","target":"router"},
+			{"id":"edge-1","source":"router","target":"next"}
+		]`,
 		false,
 	)
 	if err == nil {
@@ -91,10 +101,14 @@ func TestServiceValidateDefinitionRejectsUnknownPluginOutputHandle(t *testing.T)
 	err := service.ValidateDefinition(
 		context.Background(),
 		`[
+			{"id":"trigger","data":{"type":"trigger:manual"}},
 			{"id":"router","data":{"type":"action:plugin/acme/router"}},
 			{"id":"next","data":{"type":"action:http"}}
 		]`,
-		`[{"id":"edge-1","source":"router","sourceHandle":"missing","target":"next"}]`,
+		`[
+			{"id":"edge-0","source":"trigger","target":"router"},
+			{"id":"edge-1","source":"router","sourceHandle":"missing","target":"next"}
+		]`,
 		false,
 	)
 	if err == nil {
@@ -123,10 +137,14 @@ func TestServiceValidateDefinitionAllowsDeclaredPluginOutputHandle(t *testing.T)
 	err := service.ValidateDefinition(
 		context.Background(),
 		`[
+			{"id":"trigger","data":{"type":"trigger:manual"}},
 			{"id":"router","data":{"type":"action:plugin/acme/router"}},
 			{"id":"next","data":{"type":"action:http"}}
 		]`,
-		`[{"id":"edge-1","source":"router","sourceHandle":"success","target":"next"}]`,
+		`[
+			{"id":"edge-0","source":"trigger","target":"router"},
+			{"id":"edge-1","source":"router","sourceHandle":"success","target":"next"}
+		]`,
 		false,
 	)
 	if err != nil {

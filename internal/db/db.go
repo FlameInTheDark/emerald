@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/pressly/goose/v3"
@@ -14,6 +15,8 @@ import (
 
 //go:embed migrations/*.sql
 var embedMigrations embed.FS
+
+var gooseMu sync.Mutex
 
 type DB struct {
 	*sql.DB
@@ -62,6 +65,9 @@ func (d *DB) Close() error {
 }
 
 func Migrate(d *DB) error {
+	gooseMu.Lock()
+	defer gooseMu.Unlock()
+
 	goose.SetBaseFS(embedMigrations)
 
 	if err := goose.SetDialect("sqlite3"); err != nil {
