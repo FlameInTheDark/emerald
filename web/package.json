@@ -30,7 +30,7 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
-    "@remotion/bundler": "^4.0.447",
+    "@remotion/bundler": "^4.0.457",
     "@remotion/renderer": "^4.0.447",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -41,7 +41,7 @@
     "autoprefixer": "^10.4.17",
     "esbuild": "0.28.0",
     "jsdom": "^29.0.2",
-    "postcss": "^8.4.35",
+    "postcss": "^8.5.10",
     "remotion": "^4.0.447",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.21.0",
